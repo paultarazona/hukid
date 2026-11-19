@@ -18,8 +18,9 @@ El compose monta el módulo de verificación (FEAT-004, [ADR-0033](../decisions/
 
 - **Clave maestra:** `HUKID_VERIFICATION_KEY` cifra las claves de firma de cada tenant. Se genera una sola vez con `node scripts/staging-secrets.mjs` y no se regenera ni se rota sin un plan: lo ya cifrado quedaría ilegible. Conservar una copia fuera del servidor.
 - **Emisores:** `deploy/staging/issuer-keys.json` es un marcador con una clave pública sintética (la privada se descartó). No hay ningún emisor real de confianza hasta que exista la resolución por JWKS (VER-T12).
-- **Superficie pública:** el `Caddyfile` solo enruta `/console/*` y `/healthz`. Las rutas del wallet (`/oid4vp/*`) y la API de operador con Bearer no se exponen todavía; la consola lee las verificaciones por `/console/api`.
-- **Sin configuración de verifier por tenant:** iniciar sesiones y el wallet real siguen fuera de este despliegue; la vista Verificaciones es de solo lectura.
+- **Superficie pública:** el `Caddyfile` enruta `/console/*`, `/healthz`, las rutas del wallet (`/oid4vp/request/*`, `/oid4vp/response`) y los endpoints `/v1/operator/tenants/{id}/verification-sessions[/{sessionId}]` de la API Bearer. No enruta el resto de `/v1/operator/*`. La consola sigue leyendo las verificaciones por `/console/api`.
+- **Verifier del tenant (2026-11-19):** el tenant en uso (`100049a5-1527-428a-8dda-360c2e36289c`, el de los eventos de auditoría de un login real) quedó configurado con `verifierctl configure` y `verifierctl provision-key`. Convención de `client_id`: `x509_san_dns:<host público>` (perfil §12), aquí `x509_san_dns:hukid.zentrycore.com`; `response_uri`: `https://<host público>/oid4vp/response`. La clave de firma es de staging, generada y cifrada con la clave maestra; la `kid` activa la devuelve `provision-key`. **Límite:** el request object no lleva todavía la cadena `x5c` cuyo SAN coincida con el `client_id`; un wallet estricto con ese prefijo lo rechazará hasta que el owner decida el certificado (ADR-0034, perfil §12).
+- **Pendiente:** la consola no inicia sesiones; el inicio es por la API Bearer del operador. La vista Verificaciones es de solo lectura.
 
 ## Membresía huérfana por un `bootstrap` con subject inventado
 

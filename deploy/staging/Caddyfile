@@ -27,6 +27,15 @@
 		reverse_proxy 127.0.0.1:8080
 	}
 
+	# Verification module (FEAT-004). Only the wallet paths and the operator's verification-session
+	# endpoints are routed, not the rest of /v1/operator/*. The API authenticates each of them itself
+	# (wallet by single-use request id and state, operator by Bearer + step-up).
+	@verification path /oid4vp/request/* /oid4vp/response /v1/operator/tenants/*/verification-sessions /v1/operator/tenants/*/verification-sessions/*
+	handle @verification {
+		header Cache-Control no-store
+		reverse_proxy 127.0.0.1:8080
+	}
+
 	# Liveness of the API through the sidecar; answers 204 and exposes nothing else.
 	@health path /healthz
 	handle @health {

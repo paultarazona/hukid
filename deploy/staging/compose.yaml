@@ -49,7 +49,7 @@ services:
       # Per-tenant verification mount (FEAT-004, ADR-0033/0034). It turns on only with all four
       # variables. The master key seals the tenant signing keys: never regenerate or rotate it
       # without a plan. The issuer file is a placeholder (no real issuer is trusted yet) until the
-      # JWKS resolver (VER-T12). The wallet paths (/oid4vp/*) are not routed by the Caddyfile.
+      # JWKS resolver (VER-T12). The Caddyfile routes the wallet paths (/oid4vp/*) and the verification-session endpoints.
       HUKID_VERIFICATION_DATABASE_URL: postgres://hukid_staging_verification:${HUKID_RUNTIME_PASSWORD_VERIFICATION:?}@hukid-staging-db-ggfxdz:5432/hukid_staging?sslmode=disable
       HUKID_VERIFICATION_KEY: ${HUKID_VERIFICATION_KEY:?}
       HUKID_VERIFICATION_KEY_VERSION: ${HUKID_VERIFICATION_KEY_VERSION:?}
