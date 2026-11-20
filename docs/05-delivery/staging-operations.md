@@ -7,7 +7,7 @@ Aplica a `deploy/staging/compose.yaml` en Dokploy ([ADR-0029](../decisions/ADR-0
 Una sola vez, tras el primer despliegue, con `docker compose --profile tools run --rm tools ...`:
 
 1. `migrate`: aplica las migraciones SQL con la cuenta propietaria (`hukid_admin`).
-2. `runtime-logins`: crea los seis logins de ejecución `hukid_staging_<rol>` (`session`, `context`, `tenant`, `members`, `dashboard`, `verification`), `NOSUPERUSER`, solo con la pertenencia a su rol. Es idempotente: en un staging ya aprovisionado con cinco logins, repetirlo añade `verification` y vuelve a fijar las otras contraseñas con los mismos valores. Exige las seis variables `HUKID_RUNTIME_PASSWORD_<ROL>`.
+2. `runtime-logins`: crea los seis logins de ejecución `hukid_staging_<rol>` (`session`, `context`, `tenant`, `members`, `dashboard`, `verification`), `NOSUPERUSER`, solo con la pertenencia a su rol. Es idempotente: en un staging ya aprovisionado con cinco logins, repetirlo añade `verification` y vuelve a fijar las otras contraseñas con los mismos valores. Exige las seis variables `HUKID_RUNTIME_PASSWORD_<ROL>`. Si existe `HUKID_RUNTIME_PASSWORD_VERIFICATION_MAINTENANCE`, crea además el login de purga (ver [Purga de retención](#purga-de-retención-de-la-verificación)).
 3. `bootstrap <issuer> <subject> "<nombre del tenant>"`: crea un tenant y liga una identidad real como `tenant_admin`.
 
 El `subject` es el identificador `sub` del usuario en Keycloak (un UUID). No se puede deducir: hay que leerlo del usuario real.
@@ -22,7 +22,20 @@ El compose monta el módulo de verificación (FEAT-004, [ADR-0033](../decisions/
 - **Verifier del tenant (2026-11-19):** el tenant en uso (`100049a5-1527-428a-8dda-360c2e36289c`, el de los eventos de auditoría de un login real) quedó configurado con `verifierctl configure` y `verifierctl provision-key`. Convención de `client_id`: `x509_san_dns:<host público>` (perfil §12), aquí `x509_san_dns:hukid.zentrycore.com`; `response_uri`: `https://<host público>/oid4vp/response`. La clave de firma es de staging, generada y cifrada con la clave maestra; la `kid` activa la devuelve `provision-key`. **Límite:** el request object no lleva todavía la cadena `x5c` cuyo SAN coincida con el `client_id`; un wallet estricto con ese prefijo lo rechazará hasta que el owner decida el certificado (ADR-0034, perfil §12).
 - **Pendiente:** la consola no inicia sesiones; el inicio es por la API Bearer del operador. La vista Verificaciones es de solo lectura.
 
+## Purga de retención de la verificación
+
+`verification.purge_sessions` y `verification.purge_retired_keys` borran sesiones vencidas y claves retiradas sin sesión pendiente. Las ejecuta un login de mantenimiento propio, no el de la API ni `hukid_admin`:
+
+- La migración `0015` crea el rol `hukid_verification_maintenance` (sin login ni privilegios) con `EXECUTE` solo sobre esas dos funciones y `USAGE` sobre el esquema `verification`. No puede leer ni escribir sesiones, claves ni configuraciones.
+- `stagingdb runtime-logins` crea el login `hukid_staging_verification_maintenance` solo si existe `HUKID_RUNTIME_PASSWORD_VERIFICATION_MAINTENANCE` (el generador `staging-secrets.mjs` la crea; 32 a 128 caracteres en `[A-Za-z0-9_-]`). Va después de `migrate`: sin el rol, la creación falla y se revierte entera.
+- La purga se ejecuta con `verifierctl purge <días> <límite>` y `HUKID_DATABASE_URL` apuntando a ese login (la retención aprobada es 30 días). `configure` y `provision-key` siguen necesitando el login privilegiado.
+- **Estado:** implementado y probado contra Postgres 18 en contenedor (el rol solo ejecuta las dos purgas y recibe `42501` en todo lo demás). **Aplicado en staging el 2026-11-19** (`migrate` a 15 migraciones y `runtime-logins` con `HUKID_RUNTIME_PASSWORD_VERIFICATION_MAINTENANCE`; comprobado: `verifierctl purge 30 100` da 0 y 0, y un `SELECT` sobre `verification.sessions` da `permission denied`) y **sin planificador**: falta decidir dónde corre (por ejemplo, una tarea programada de Dokploy con `verifierctl` dentro de la imagen, que hoy no lo incluye).
+
 ## Membresía huérfana por un `bootstrap` con subject inventado
+
+### Resuelto el 2026-11-19
+
+Consultada la base, había **tres** tenants "Zentry Core", no dos: `045cb550-32ac-47c1-8ce3-07e00260d861` (subject `1b2c3d4e-5f60-7182-93a4-b5c6d7e8f901`), `79086f44-8dc5-41e6-8974-57548ab55ca9` (subject literal `TU-UUID-REAL`, de un `bootstrap` con el texto de ejemplo) y `100049a5-1527-428a-8dda-360c2e36289c` (subject real de Keycloak, el único con eventos de auditoría de un login). Los dos primeros se suspendieron con este procedimiento, adaptado a dos `UPDATE` con su propia guarda por subject en una sola transacción que se revierte si alguno no afecta exactamente una fila. Resultado leído de la base: ambos `suspended` con el nombre "Zentry Core (descartado: bootstrap con subject erróneo)", el real `active`, membresías, identidades y auditoría intactas. La consola mostrando una sola organización no se ha comprobado aún. El resto de la sección conserva el análisis original, escrito cuando se creía que eran dos tenants.
 
 ### Qué quedó, según el código
 
@@ -35,7 +48,7 @@ El compose monta el módulo de verificación (FEAT-004, [ADR-0033](../decisions/
 | `tenancy.memberships` + `membership_roles` | `active` + `tenant_admin` | `active` + `tenant_admin` |
 | `platform.audit_events` + `outbox_events` | `staging.bootstrap.completed` | `staging.bootstrap.completed` |
 
-Estado **inferido, no consultado**: no hay acceso a la base desde la máquina de desarrollo (no publica puerto y el usuario SSH no tiene permiso de Docker). El paso 1 de abajo lo confirma.
+Estado **inferido** cuando se escribió esta sección; la consulta del 2026-11-19 (ver arriba) mostró un tercer tenant. Desde la máquina de desarrollo se llega a la base por Tailscale (`100.78.192.113:5433`) con `psql` en un contenedor; el paso 1 de abajo sigue siendo la comprobación previa.
 
 El huérfano es inofensivo hoy: nadie puede autenticarse con ese subject (Keycloak asigna sus propios UUID), y como la consola solo lista tenants `active` con membresía `active` del operador actual, nadie lo ve. Pero hay dos tenants con el mismo nombre y una identidad administradora sin dueño.
 
@@ -84,7 +97,7 @@ COMMIT;
 
 **3. Comprobar.** Repite la consulta del paso 1 (ahora debe mostrar `suspended` y el nombre nuevo para el huérfano y `active` para el real) y entra en la consola: debe aparecer una sola organización.
 
-Verificado por lectura: ninguna de las migraciones 0001-0011 define triggers, y los cinco roles de ejecución solo tienen `SELECT` sobre `tenancy.tenants`, así que el `UPDATE` solo lo puede hacer el propietario. No verificado: el `UPDATE` en sí, que no se ha ejecutado contra la base de staging. Si fallara, la transacción se revierte y no queda nada a medias.
+Verificado por lectura: ninguna de las migraciones 0001-0011 define triggers, y los cinco roles de ejecución solo tienen `SELECT` sobre `tenancy.tenants`, así que el `UPDATE` solo lo puede hacer el propietario. El `UPDATE` se ejecutó contra staging el 2026-11-19 (ver arriba) y funcionó como se esperaba. Si fallara, la transacción se revierte y no queda nada a medias.
 
 ### ¿Debe `bootstrap` rechazar subjects que no existen en Keycloak?
 

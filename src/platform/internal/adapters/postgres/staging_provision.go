@@ -41,6 +41,11 @@ func validStagingIssuer(issuer string) bool {
 // here is a plain member of exactly one of them (OpenRuntimePool rejects anything else).
 var RuntimeLoginRoles = []string{"session", "context", "tenant", "members", "dashboard", "verification"}
 
+// MaintenanceLoginRole is the optional staging login for the verification retention purge. Unlike
+// the runtime roles it is not one the API opens pools for: verifierctl purge connects with it. Its
+// group role may only run the two purge functions (migration 0015).
+const MaintenanceLoginRole = "verification_maintenance"
+
 var runtimePassword = regexp.MustCompile(`^[A-Za-z0-9_-]{32,128}$`)
 
 // RuntimeLoginName is the staging login that carries one runtime role.
@@ -63,13 +68,27 @@ func ProvisionRuntimeLogins(ctx context.Context, conn *pgx.Conn, passwords map[s
 			return errors.New("every runtime login needs a password of 32..128 characters in [A-Za-z0-9_-]")
 		}
 	}
+	// The maintenance login is created only when its password is given, so a staging that
+	// has not adopted it keeps working with the runtime logins alone.
+	groups := make(map[string]string, len(RuntimeLoginRoles)+1)
+	roles := append([]string(nil), RuntimeLoginRoles...)
+	for _, role := range RuntimeLoginRoles {
+		groups[role] = "hukid_" + role + "_runtime"
+	}
+	if passwords[MaintenanceLoginRole] != "" {
+		if !runtimePassword.MatchString(passwords[MaintenanceLoginRole]) {
+			return errors.New("the maintenance login needs a password of 32..128 characters in [A-Za-z0-9_-]")
+		}
+		roles = append(roles, MaintenanceLoginRole)
+		groups[MaintenanceLoginRole] = "hukid_" + MaintenanceLoginRole
+	}
 	tx, err := conn.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(context.Background())
-	for _, role := range RuntimeLoginRoles {
-		login, runtime := RuntimeLoginName(role), "hukid_"+role+"_runtime"
+	for _, role := range roles {
+		login, runtime := RuntimeLoginName(role), groups[role]
 		var exists bool
 		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname=$1)`, login).Scan(&exists); err != nil {
 			return err

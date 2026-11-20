@@ -38,7 +38,7 @@ Las decisiones #1–#4 de arriba quedaron cerradas por delegación y son revocab
 | 11 | Valores propuestos de FEAT-004: límites de entrada, tolerancia de reloj, contextos permitidos, TTL y límites del resolver JWKS. | Propuestos, sin aprobar. |
 | 12 | Qué hacer con el trabajo de juanrmos conservado en la etiqueta `backup-fake-2026-11-17`. | El owner indicó que se verá más adelante. |
 
-Pendientes de implementación que no son decisiones: el login de mantenimiento que ejecute `purge_sessions` y `purge_retired_keys` (la retención de 30 días ya está aprobada con ADR-0033) y el alta de la clave y de `verifier_configs` del tenant, que hoy no tiene CLI ni API.
+Pendientes de implementación que no son decisiones: programar la purga de retención (la retención de 30 días ya está aprobada con ADR-0033). El login de mantenimiento existe en el código (migración `0015` y login opcional de `stagingdb runtime-logins`, solo puede ejecutar `purge_sessions` y `purge_retired_keys`) y está aplicado en staging desde el 2026-11-19, pero **no hay un planificador**. El alta de la clave y de `verifier_configs` del tenant se hace con `verifierctl` (sin API).
 
 ## Correcciones de auditoría frontend — 2026-11-08
 

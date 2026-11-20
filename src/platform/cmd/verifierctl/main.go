@@ -10,7 +10,9 @@
 //	verifierctl purge <retention-days> <limit>
 //
 // Environment: HUKID_ENV (staging, local or test) selects the connection guard
-// of the matching database helper; HUKID_DATABASE_URL is the privileged login.
+// of the matching database helper; HUKID_DATABASE_URL is the privileged login
+// (configure and provision-key). purge also runs with the least-privilege
+// maintenance login (migration 0015), which can execute only the two purges.
 // provision-key also reads HUKID_VERIFICATION_KEY (base64, 32 bytes) and
 // HUKID_VERIFICATION_KEY_VERSION, the same master key the API uses to open it.
 package main
