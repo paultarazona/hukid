@@ -28,6 +28,12 @@ func (r *activitySnapshot) GeneratedAt(context.Context) (time.Time, error) {
 func (r *activitySnapshot) ActiveMembers(context.Context) (int64, time.Time, error) {
 	panic("unexpected members read")
 }
+func (r *activitySnapshot) CreatedRequests(context.Context, time.Time, time.Time) (int64, time.Time, error) {
+	panic("unexpected issuance requests read")
+}
+func (r *activitySnapshot) IssuedCredentials(context.Context, time.Time, time.Time) (int64, time.Time, error) {
+	panic("unexpected issued credentials read")
+}
 func (r *activitySnapshot) Activity(_ context.Context, f Filter, pos Position, asOf time.Time) ([]Event, error) {
 	r.calls++
 	r.positions = append(r.positions, pos)

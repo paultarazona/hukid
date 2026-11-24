@@ -9,6 +9,8 @@
 #   docker compose --profile tools run --rm tools migrate
 #   docker compose --profile tools run --rm tools runtime-logins
 #   docker compose --profile tools run --rm tools bootstrap <issuer> <subject> "<tenant name>"
+# Issuer runtime and its workers are in the optional overlay `compose.issuer.yaml` so database
+# migrations and the base console can be provisioned before issuer secrets are available.
 services:
   api:
     build: { context: ../.., dockerfile: deploy/staging/Dockerfile.api }
@@ -94,6 +96,7 @@ services:
       HUKID_RUNTIME_PASSWORD_DASHBOARD: ${HUKID_RUNTIME_PASSWORD_DASHBOARD:-}
       HUKID_RUNTIME_PASSWORD_VERIFICATION: ${HUKID_RUNTIME_PASSWORD_VERIFICATION:-}
       HUKID_RUNTIME_PASSWORD_VERIFICATION_MAINTENANCE: ${HUKID_RUNTIME_PASSWORD_VERIFICATION_MAINTENANCE:-}
+      HUKID_RUNTIME_PASSWORD_ISSUANCE: ${HUKID_RUNTIME_PASSWORD_ISSUANCE:-}
 
 networks:
   dokploy-network:

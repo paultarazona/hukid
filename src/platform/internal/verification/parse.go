@@ -116,6 +116,9 @@ type ParsedCredential struct {
 	// checked must never let the credential be reported as valid.
 	DeclaresStatus bool
 	DeclaresSchema bool
+	RawStatus      json.RawMessage
+	RawSchema      json.RawMessage
+	RawSubject     json.RawMessage
 	// UntrustedKeyHeaders lists key-bearing JOSE headers supplied by the
 	// credential itself (jku, jwk, x5u, x5c). The profile forbids using them;
 	// the issuerKey check rejects the credential when this is not empty.
@@ -202,8 +205,19 @@ func ParseCredential(jws string, limits Limits) (*ParsedCredential, Check) {
 	if parsed.ValidFromAt != nil && parsed.ValidUntilAt != nil && !parsed.ValidFromAt.Before(*parsed.ValidUntilAt) {
 		return fail(CodeFormatMalformed)
 	}
-	_, parsed.DeclaresStatus = payload["credentialStatus"]
-	_, parsed.DeclaresSchema = payload["credentialSchema"]
+	rawStatus, declaresStatus := payload["credentialStatus"]
+	parsed.DeclaresStatus = declaresStatus
+	if declaresStatus {
+		parsed.RawStatus = append(json.RawMessage(nil), rawStatus...)
+	}
+	rawSchema, declaresSchema := payload["credentialSchema"]
+	parsed.DeclaresSchema = declaresSchema
+	if declaresSchema {
+		parsed.RawSchema = append(json.RawMessage(nil), rawSchema...)
+	}
+	if rawSubject, hasSubject := payload["credentialSubject"]; hasSubject {
+		parsed.RawSubject = append(json.RawMessage(nil), rawSubject...)
+	}
 	if raw, present := payload["cnf"]; present {
 		cnf, err := decodeStrictObject(raw, limits.MaxJSONDepth)
 		if err != nil {

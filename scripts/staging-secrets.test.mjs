@@ -15,6 +15,10 @@ test('generates every API secret with the formats the API accepts', () => {
   assert.equal(values.HUKID_OIDC_CLIENT_SECRET, OIDC);
   assert.equal(values.HUKID_AUTH_KEY_VERSION, 'staging-1');
   assert.equal(values.HUKID_VERIFICATION_KEY_VERSION, 'staging-1');
+  assert.equal(values.HUKID_ISSUANCE_CLAIMS_KEY_VERSION, 'staging-1');
+  assert.equal(values.HUKID_VAULT_MOUNT, 'transit');
+  assert.equal(values.HUKID_VAULT_KEK_NAME, 'hukid-claims-dek');
+  assert.equal(values.HUKID_STAGING_DB_HOST, '');
   assert.ok(created.includes('HUKID_AUTH_KEY'));
 });
 

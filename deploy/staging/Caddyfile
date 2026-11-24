@@ -36,6 +36,14 @@
 		reverse_proxy 127.0.0.1:8080
 	}
 
+	# Wallet OID4VCI discovery, token/credential endpoints and private integration/admin API.
+	# Keep these on the API; the SPA fallback must never turn API paths into index.html.
+	@issuance path_regexp issuance ^(/\.well-known/oauth-authorization-server|/oauth2/token|/v1/.*|/[^/]+/\.well-known/(jwks\.json|openid-credential-issuer)|/[^/]+/(offers/[^/]+|status/[^/]+/[^/]+|schemas/[^/]+/[^/]+|contexts/[^/]+/[^/]+|nonce|credential|deferred_credential))$
+	handle @issuance {
+		header Cache-Control no-store
+		reverse_proxy 127.0.0.1:8080
+	}
+
 	# Liveness of the API through the sidecar; answers 204 and exposes nothing else.
 	@health path /healthz
 	handle @health {

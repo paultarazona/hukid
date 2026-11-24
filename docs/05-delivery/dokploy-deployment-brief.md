@@ -1,4 +1,6 @@
-# Brief de despliegue HukID en Dokploy (borrador)
+# Brief histórico de despliegue HukID en Dokploy (borrador)
+
+> **No describe el estado actual:** este diagnóstico es anterior al despliegue base de API/consola y a la configuración Issuer añadida al repo. Conserva evidencia histórica; para el estado vigente consulta [staging-architecture.md](staging-architecture.md), [staging-operations.md](staging-operations.md) y [staging-verification.md](staging-verification.md). El overlay Issuer sigue sin aplicarse ni probarse en Dokploy.
 
 Estado: borrador de consulta, no es una decisión. Producción y despliegue siguen sin decidir en `documentation-gaps.md`; si se adopta, debe quedar en un ADR. Todo lo de abajo sale del código del repo (commit `bc4e614`) salvo lo marcado **[no verificado]**.
 

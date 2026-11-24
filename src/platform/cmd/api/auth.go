@@ -29,6 +29,12 @@ type authConfig struct {
 }
 
 func loadAuthConfiguration() (*authConfig, error) {
+	if err := validateIssuanceRuntimeConfiguration(); err != nil {
+		return nil, err
+	}
+	if err := validateOID4VPRuntimeConfiguration(); err != nil {
+		return nil, err
+	}
 	dashboardConfig, dashboardErr := loadDashboardConfiguration()
 	if dashboardConfig != nil {
 		clear(dashboardConfig.Key)
@@ -102,43 +108,84 @@ func configureHandler(ctx context.Context, address string) (http.Handler, func()
 	if err != nil {
 		return nil, nil, err
 	}
+	var cleanups []func()
+	cleanupAll := func() {
+		for i := len(cleanups) - 1; i >= 0; i-- {
+			cleanups[i]()
+		}
+	}
+	var labRoutes []func(*http.ServeMux)
 	lab, err := configureOID4VPLab(os.Stdout, time.Now)
 	if err != nil {
 		return nil, nil, err
 	}
-	var labRoutes []func(*http.ServeMux)
 	if lab != nil {
 		labRoutes = append(labRoutes, lab)
 	}
+	vciLab, vciCleanup, err := configureOID4VCILab(ctx, address, os.Stdout, time.Now)
+	if err != nil {
+		cleanupAll()
+		return nil, nil, err
+	}
+	if vciCleanup != nil {
+		cleanups = append(cleanups, vciCleanup)
+	}
+	if vciLab != nil {
+		labRoutes = append(labRoutes, vciLab)
+	}
+	vpRuntime, err := configureOID4VPRuntime(os.Stdout, time.Now)
+	if err != nil {
+		cleanupAll()
+		return nil, nil, err
+	}
+	if vpRuntime != nil {
+		labRoutes = append(labRoutes, vpRuntime)
+	}
 	if config == nil {
-		return bootstrap.Handler(labRoutes...), func() {}, nil
+		vciRuntime, vciRuntimeCleanup, err := configureIssuanceRuntime(ctx, nil, nil, time.Now)
+		if err != nil {
+			cleanupAll()
+			return nil, nil, err
+		}
+		if vciRuntimeCleanup != nil {
+			cleanups = append(cleanups, vciRuntimeCleanup)
+		}
+		if vciRuntime != nil {
+			labRoutes = append(labRoutes, vciRuntime)
+		}
+		return bootstrap.Handler(labRoutes...), cleanupAll, nil
 	}
 	defer clear(config.key)
 	// A local Vite proxy can own the browser origin. This is explicit config,
 	// never a forwarded/request header; policy validation still confines it to loopback.
 	if config.policy.ConsoleOrigin != "http://"+address && os.Getenv("HUKID_CONSOLE_PROXY_ORIGIN") != config.policy.ConsoleOrigin {
+		cleanupAll()
 		return nil, nil, errors.New("auth origin must match the explicit listener")
 	}
 	box, err := secretbox.New(config.key, config.keyVersion, rand.Reader)
 	if err != nil {
+		cleanupAll()
 		return nil, nil, authentication.ErrDependency
 	}
 	pool, err := postgres.OpenRuntimePool(ctx, config.dsn, "hukid_session_runtime", 4)
 	if err != nil {
+		cleanupAll()
 		return nil, nil, authentication.ErrDependency
 	}
 	discovery, err := postgres.OpenRuntimePool(ctx, config.contextDSN, "hukid_context_runtime", 4)
 	if err != nil {
 		pool.Close()
+		cleanupAll()
 		return nil, nil, authentication.ErrDependency
 	}
 	tenant, err := postgres.OpenRuntimePool(ctx, config.tenantDSN, "hukid_tenant_runtime", 4)
 	if err != nil {
 		discovery.Close()
 		pool.Close()
+		cleanupAll()
 		return nil, nil, authentication.ErrDependency
 	}
-	closePools := func() { tenant.Close(); discovery.Close(); pool.Close() }
+	closePools := func() { tenant.Close(); discovery.Close(); pool.Close(); cleanupAll() }
 	provider, err := oidc.New(ctx, config.policy, config.clientSecret, time.Now)
 	if err != nil {
 		closePools()
@@ -168,6 +215,19 @@ func configureHandler(ctx context.Context, address string) (http.Handler, func()
 		closePools()
 		return nil, nil, err
 	}
+	vciRuntime, vciRuntimeCleanup, err := configureIssuanceRuntime(ctx, management, me, time.Now)
+	if err != nil {
+		closeDashboard()
+		closeDirectory()
+		closePools()
+		return nil, nil, err
+	}
+	if vciRuntimeCleanup != nil {
+		cleanups = append(cleanups, vciRuntimeCleanup)
+	}
+	if vciRuntime != nil {
+		labRoutes = append(labRoutes, vciRuntime)
+	}
 	registerVerification, closeVerification, err := configureVerification(ctx, management, me, lab != nil)
 	if err != nil {
 		closeDashboard()
@@ -175,7 +235,14 @@ func configureHandler(ctx context.Context, address string) (http.Handler, func()
 		closePools()
 		return nil, nil, err
 	}
+	settings := &consolehttp.SettingsHandler{Auth: me, IssuanceRuntimeEnabled: vciRuntime != nil}
 	commands := consolehttp.NewSessions(&authentication.SessionLifecycle{Sessions: sessions, Store: store, OIDC: provider, Random: rand.Reader})
 	stopCleanup := store.StartSessionCleanup(context.Background())
-	return audithttp.Wrap(bootstrap.Handler(append([]func(*http.ServeMux){consolehttp.New(service).Register, management.Register, me.Register, commands.Register, protectedCommands.Register, registerDirectory, registerDashboard, registerVerification}, labRoutes...)...), store, slog.Default()), func() { stopCleanup(); closeVerification(); closeDashboard(); closeDirectory(); closePools() }, nil
+	return audithttp.Wrap(bootstrap.Handler(append([]func(*http.ServeMux){consolehttp.New(service).Register, management.Register, me.Register, settings.Register, commands.Register, protectedCommands.Register, registerDirectory, registerDashboard, registerVerification}, labRoutes...)...), store, slog.Default()), func() {
+		stopCleanup()
+		closeVerification()
+		closeDashboard()
+		closeDirectory()
+		closePools()
+	}, nil
 }

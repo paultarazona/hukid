@@ -259,7 +259,7 @@ npm run test:dashboard:gate ejecuta check, build, PostgreSQL, smoke y Chromium i
 Alternativa al laboratorio descartable: PostgreSQL 18.6 persistente (puerto 54329, base `hukid_local`), Keycloak 26.8.2 como IdP y un operador real. Estado y secretos en `.cache/local/` (ignorado por git). Requiere JDK y los toolchains de `.cache/toolchains`.
 
 ```
-node scripts/local-env.mjs init           # crear o actualizar clúster, migraciones, cinco roles y claves
+node scripts/local-env.mjs init           # crear o actualizar clúster, migraciones, seis roles y claves
 node scripts/local-env.mjs keycloak-init  # crear o reconciliar realm, cliente, flujo MFA y mappers
 node scripts/local-env.mjs start          # PostgreSQL + Keycloak + API + consola; Ctrl+C detiene los procesos
 node scripts/local-env.mjs bootstrap      # con Keycloak activo: vincula operador.local a un tenant (idempotente)
@@ -269,6 +269,28 @@ Orden recomendado tras `init` y `keycloak-init`: `start`, `bootstrap` en otra te
 
 Acceso en la raíz: la consola no tiene pantalla de acceso (ADR-0025). Abrir `/` sin sesión redirige directamente al formulario de Keycloak, que siempre pide credenciales (`prompt=login consent`); cerrar sesión vuelve a ese formulario. Se intenta un login automático por minuto y pestaña; si la ida y vuelta falla, aparece «Acceso no completado» con «Iniciar sesión de nuevo» en lugar de un bucle. `start` compila la consola en `.cache/local/console-dist`, separada de `dist/`. Diagramas de piezas, arranque y login en [flujo global](flujo-global.md).
 
-El [perfil Keycloak implementado](../03-design/console-local-keycloak.md), según [ADR-0026](../decisions/ADR-0026.md), conserva las validaciones operator y configura ES256/at+jwt, clase/grant y MFA por ejecuciones reales. `bootstrap` autentica cada operación administrativa, sin sesión kcadm previa. `start` conecta AUTH, miembros/invitaciones y dashboard con cinco credenciales runtime separadas. Actualizar instalaciones existentes repitiendo `init` y `keycloak-init`, sin borrar `.cache/local`.
+El [perfil Keycloak implementado](../03-design/console-local-keycloak.md), según [ADR-0026](../decisions/ADR-0026.md), conserva las validaciones operator y configura ES256/at+jwt, clase/grant y MFA por ejecuciones reales. `bootstrap` autentica cada operación administrativa, sin sesión kcadm previa. `start` conecta AUTH, miembros/invitaciones, dashboard y el runtime del Issuer con seis credenciales separadas. Actualizar instalaciones existentes repitiendo `init` y `keycloak-init`, sin borrar `.cache/local`.
+
+### Perfil local del Issuer
+
+El perfil local puede usar Vault Transit nativo (sin Docker ni WSL) y un directorio aislado, para conservar un `.cache/local` previo con otro historial de migraciones. Vault 1.18.0 se descarga desde [HashiCorp Releases](https://releases.hashicorp.com/vault/1.18.0/) y se verifica con el SHA-256 oficial antes de extraerlo en `.cache/toolchains/vault-1.18.0/`. El estado cifrado de Vault, su clave de desellado, los tokens locales y las credenciales del perfil quedan únicamente en `.cache/local-issuer/`, ignorado por Git.
+
+En PowerShell, usa la misma terminal para estos comandos:
+
+```powershell
+$env:HUKID_LOCAL_STATE_DIR = '.cache/local-issuer'
+$env:HUKID_PG_PORT = '54339'
+$env:HUKID_KC_PORT = '8181'
+$env:HUKID_API_PORT = '8180'
+$env:HUKID_CONSOLE_PORT = '5273'
+$env:HUKID_VAULT_PORT = '18200'
+node scripts/local-env.mjs init
+node scripts/local-env.mjs keycloak-init
+node scripts/local-vault.mjs start
+node scripts/local-env.mjs start
+node scripts/local-env.mjs bootstrap
+```
+
+Luego abre `http://127.0.0.1:5273/`. `local-vault.mjs start` inicia Vault con backend de archivos local, crea el mount Transit, una KEK local y un token runtime limitado a las claves del Issuer; `local-env.mjs start` lee ese token sin imprimirlo y activa el runtime de emisión. Este Vault local enlaza solo a loopback y su estado persistente se conserva al detenerlo. El token root y la clave de desellado solo están en `.cache/local-issuer/vault-secrets.json`; no copies ni publiques ese archivo. Para detener, ejecuta `node scripts/local-env.mjs stop` y `node scripts/local-vault.mjs stop` en la misma terminal con las variables de perfil anteriores. La modalidad usa HTTP local y no sustituye la configuración TLS, políticas operativas ni controles de producción.
 
 `npm run test:keycloak` añade un gate real separado, con realm, clúster, API y consola propios; requiere Keycloak activo, build previo y Python/Playwright. Metadatos en `.cache/keycloak-tests/latest.json`; alcance y evidencia vigente en [tareas AUTH](../features/FEAT-001-authentication/tasks.md). Límites: HTTP sin cookie `Secure`, correo sintético, sin rotación operativa, backup/restore ni producción. Los snapshots históricos anteriores no acreditan estas correcciones.

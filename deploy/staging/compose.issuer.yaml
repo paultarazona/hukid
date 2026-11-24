@@ -1,0 +1,76 @@
+# Optional issuer overlay. Keep migrations/bootstrap runnable through compose.yaml before
+# these secrets are configured. Apply this overlay only after Vault + the issuance DB login exist.
+services:
+  api:
+    environment:
+      HUKID_ISSUANCE_DATABASE_URL: 'postgres://hukid_staging_issuance:${HUKID_RUNTIME_PASSWORD_ISSUANCE:?}@${HUKID_STAGING_DB_HOST:?Set the database hostname covered by its TLS certificate}:5432/hukid_staging?sslmode=verify-full&sslrootcert=/run/secrets/postgres-ca'
+      HUKID_ISSUANCE_AUTH_SERVER: ${HUKID_ISSUANCE_AUTH_SERVER:?}
+      HUKID_ISSUANCE_PUBLIC_URL: ${HUKID_ISSUANCE_PUBLIC_URL:?}
+      HUKID_ISSUANCE_CLAIMS_KEY_CIPHERTEXT: ${HUKID_ISSUANCE_CLAIMS_KEY_CIPHERTEXT:?}
+      HUKID_ISSUANCE_CLAIMS_KEY_VERSION: ${HUKID_ISSUANCE_CLAIMS_KEY_VERSION:?}
+      HUKID_VAULT_ADDR: ${HUKID_VAULT_ADDR:?}
+      HUKID_VAULT_TOKEN: ${HUKID_VAULT_TOKEN:?}
+      HUKID_VAULT_MOUNT: ${HUKID_VAULT_MOUNT:-transit}
+      HUKID_VAULT_NAMESPACE: ${HUKID_VAULT_NAMESPACE:-}
+      HUKID_VAULT_KEK_NAME: ${HUKID_VAULT_KEK_NAME:?}
+    secrets: [postgres-ca]
+
+  deferred-worker:
+    profiles: [issuer-workers]
+    image: hukid-api:staging
+    entrypoint: ["/app/hukid-worker"]
+    command: ["deferred", "${HUKID_ISSUANCE_TENANT_ID:-}", "50", "--interval=5m"]
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    networks: [dokploy-network]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      HUKID_ENV: staging
+      HUKID_ISSUANCE_DATABASE_URL: 'postgres://hukid_staging_issuance:${HUKID_RUNTIME_PASSWORD_ISSUANCE:?}@${HUKID_STAGING_DB_HOST:?Set the database hostname covered by its TLS certificate}:5432/hukid_staging?sslmode=verify-full&sslrootcert=/run/secrets/postgres-ca'
+      HUKID_ISSUANCE_AUTH_SERVER: ${HUKID_ISSUANCE_AUTH_SERVER:?}
+      HUKID_ISSUANCE_CLAIMS_KEY_CIPHERTEXT: ${HUKID_ISSUANCE_CLAIMS_KEY_CIPHERTEXT:?}
+      HUKID_ISSUANCE_CLAIMS_KEY_VERSION: ${HUKID_ISSUANCE_CLAIMS_KEY_VERSION:?}
+      HUKID_VAULT_ADDR: ${HUKID_VAULT_ADDR:?}
+      HUKID_VAULT_TOKEN: ${HUKID_VAULT_TOKEN:?}
+      HUKID_VAULT_MOUNT: ${HUKID_VAULT_MOUNT:-transit}
+      HUKID_VAULT_NAMESPACE: ${HUKID_VAULT_NAMESPACE:-}
+      HUKID_VAULT_KEK_NAME: ${HUKID_VAULT_KEK_NAME:?}
+    secrets: [postgres-ca]
+
+  retention-worker:
+    profiles: [issuer-workers]
+    image: hukid-api:staging
+    entrypoint: ["/app/hukid-worker"]
+    command: ["retention", "${HUKID_ISSUANCE_TENANT_ID:-}", "--retention-ttl=168h", "--limit=500", "--interval=1h"]
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    networks: [dokploy-network]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      HUKID_ENV: staging
+      HUKID_ISSUANCE_DATABASE_URL: 'postgres://hukid_staging_issuance:${HUKID_RUNTIME_PASSWORD_ISSUANCE:?}@${HUKID_STAGING_DB_HOST:?Set the database hostname covered by its TLS certificate}:5432/hukid_staging?sslmode=verify-full&sslrootcert=/run/secrets/postgres-ca'
+      HUKID_ISSUANCE_AUTH_SERVER: ${HUKID_ISSUANCE_AUTH_SERVER:?}
+      HUKID_ISSUANCE_CLAIMS_KEY_CIPHERTEXT: ${HUKID_ISSUANCE_CLAIMS_KEY_CIPHERTEXT:?}
+      HUKID_ISSUANCE_CLAIMS_KEY_VERSION: ${HUKID_ISSUANCE_CLAIMS_KEY_VERSION:?}
+      HUKID_VAULT_ADDR: ${HUKID_VAULT_ADDR:?}
+      HUKID_VAULT_TOKEN: ${HUKID_VAULT_TOKEN:?}
+      HUKID_VAULT_MOUNT: ${HUKID_VAULT_MOUNT:-transit}
+      HUKID_VAULT_NAMESPACE: ${HUKID_VAULT_NAMESPACE:-}
+      HUKID_VAULT_KEK_NAME: ${HUKID_VAULT_KEK_NAME:?}
+    secrets: [postgres-ca]
+
+networks:
+  dokploy-network:
+    external: true
+
+secrets:
+  postgres-ca:
+    file: ${HUKID_POSTGRES_CA_FILE:?Set an absolute path to the PostgreSQL CA certificate on the Dokploy host}

@@ -39,7 +39,7 @@ func validStagingIssuer(issuer string) bool {
 
 // RuntimeLoginRoles are the runtime roles the API opens pools for. Each login created
 // here is a plain member of exactly one of them (OpenRuntimePool rejects anything else).
-var RuntimeLoginRoles = []string{"session", "context", "tenant", "members", "dashboard", "verification"}
+var RuntimeLoginRoles = []string{"session", "context", "tenant", "members", "dashboard", "verification", "issuance"}
 
 // MaintenanceLoginRole is the optional staging login for the verification retention purge. Unlike
 // the runtime roles it is not one the API opens pools for: verifierctl purge connects with it. Its
