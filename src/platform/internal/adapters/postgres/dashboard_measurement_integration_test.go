@@ -33,8 +33,12 @@ func (m *dashboardQueryTiming) TraceQueryStart(ctx context.Context, _ *pgx.Conn,
 		label = "context"
 	case strings.Contains(data.SQL, "authorization_revision"):
 		label = "authorization"
-	case strings.Contains(data.SQL, "count(*)"):
+	case strings.Contains(data.SQL, "FROM tenancy.memberships"):
 		label = "members"
+	case strings.Contains(data.SQL, "FROM issuance.issuance_requests"):
+		label = "issuance_requests"
+	case strings.Contains(data.SQL, "FROM status.issued_credentials"):
+		label = "issued_credentials"
 	case strings.Contains(data.SQL, "FROM platform.audit_events"):
 		label = "activity"
 	case strings.Contains(data.SQL, "clock_timestamp"):
@@ -134,7 +138,7 @@ func TestDashboardQueryMeasurement(t *testing.T) {
 	for label, values := range timing.samples {
 		queries[label] = summarizeDashboardTiming(values)
 	}
-	if queries["members"].Samples != 30 || queries["activity"].Samples != 60 || queries["authorization"].Samples != 90 {
+	if queries["members"].Samples != 30 || queries["issuance_requests"].Samples != 30 || queries["issued_credentials"].Samples != 30 || queries["activity"].Samples != 60 || queries["authorization"].Samples != 90 {
 		t.Fatal("measurement query coverage changed")
 	}
 	requests := map[string]dashboardTimingSummary{}

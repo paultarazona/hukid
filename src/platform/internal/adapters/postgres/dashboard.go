@@ -82,6 +82,38 @@ func (r *dashboardSnapshot) ActiveMembers(ctx context.Context) (int64, time.Time
 	return count, asOf.UTC(), nil
 }
 
+func ceilMicrosecond(at time.Time) time.Time {
+	floor := at.Truncate(time.Microsecond)
+	if floor.Before(at) {
+		return floor.Add(time.Microsecond)
+	}
+	return floor
+}
+
+func (r *dashboardSnapshot) countInWindow(ctx context.Context, query string, from, to time.Time) (int64, time.Time, error) {
+	if !from.Before(to) {
+		return 0, time.Time{}, dashboard.ErrInput
+	}
+	var count int64
+	var asOf time.Time
+	if err := r.tx.QueryRow(ctx, query, r.tenant, ceilMicrosecond(from), ceilMicrosecond(to)).Scan(&count, &asOf); err != nil {
+		return 0, time.Time{}, authentication.ErrDependency
+	}
+	return count, asOf.UTC(), nil
+}
+
+func (r *dashboardSnapshot) CreatedRequests(ctx context.Context, from, to time.Time) (int64, time.Time, error) {
+	return r.countInWindow(ctx,
+		`SELECT count(*),transaction_timestamp() FROM issuance.issuance_requests WHERE tenant_id=$1 AND created_at >= $2 AND created_at < $3`,
+		from, to)
+}
+
+func (r *dashboardSnapshot) IssuedCredentials(ctx context.Context, from, to time.Time) (int64, time.Time, error) {
+	return r.countInWindow(ctx,
+		`SELECT count(*),transaction_timestamp() FROM status.issued_credentials WHERE tenant_id=$1 AND issued_at >= $2 AND issued_at < $3`,
+		from, to)
+}
+
 func (r *dashboardSnapshot) Activity(ctx context.Context, f dashboard.Filter, pos dashboard.Position, asOf time.Time) ([]dashboard.Event, error) {
 	// This source has no issuer attribution. Do not treat tenant events as events
 	// of every issuer, even if a future caller bypasses the use-case scope guard.
@@ -97,16 +129,6 @@ func (r *dashboardSnapshot) Activity(ctx context.Context, f dashboard.Filter, po
 	}
 	if (pos.ID == "") != pos.At.IsZero() || pos.ID != "" && !validID(id) {
 		return nil, dashboard.ErrCursor
-	}
-	// recorded_at has microsecond precision. pgx truncates nanosecond inputs,
-	// which would widen >= from and narrow < to. Ceil both bounds onto the
-	// source's timestamp grid to preserve the requested half-open interval.
-	ceilMicrosecond := func(at time.Time) time.Time {
-		floor := at.Truncate(time.Microsecond)
-		if floor.Before(at) {
-			return floor.Add(time.Microsecond)
-		}
-		return floor
 	}
 	rows, err := r.tx.Query(ctx, `SELECT event_id::text,action,outcome,recorded_at,actor_operator_identity_id::text,target_id::text
  FROM platform.audit_events WHERE tenant_id=$1 AND outcome='success'

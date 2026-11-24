@@ -9,12 +9,27 @@ import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
-export const ROLES = ['SESSION', 'CONTEXT', 'TENANT', 'MEMBERS', 'DASHBOARD', 'VERIFICATION', 'VERIFICATION_MAINTENANCE'];
+export const ROLES = ['SESSION', 'CONTEXT', 'TENANT', 'MEMBERS', 'DASHBOARD', 'VERIFICATION', 'VERIFICATION_MAINTENANCE', 'ISSUANCE'];
 // HUKID_VERIFICATION_KEY seals the per-tenant verifier signing keys (ADR-0034); losing or
 // rotating it makes the stored keys unreadable, so it is only ever generated once.
 const KEYS = ['HUKID_AUTH_KEY', 'HUKID_INVITATION_KEY', 'HUKID_INVITATION_HMAC_KEY', 'HUKID_MEMBERS_CURSOR_KEY', 'HUKID_DASHBOARD_CURSOR_KEY', 'HUKID_VERIFICATION_KEY'];
-const VERSIONS = { HUKID_AUTH_KEY_VERSION: 'staging-1', HUKID_INVITATION_KEY_VERSION: 'staging-1', HUKID_VERIFICATION_KEY_VERSION: 'staging-1' };
-export const MANUAL = ['HUKID_DB_ADMIN_PASSWORD'];
+const VERSIONS = {
+  HUKID_AUTH_KEY_VERSION: 'staging-1',
+  HUKID_INVITATION_KEY_VERSION: 'staging-1',
+  HUKID_VERIFICATION_KEY_VERSION: 'staging-1',
+  HUKID_ISSUANCE_CLAIMS_KEY_VERSION: 'staging-1',
+};
+const DEFAULTS = {
+  HUKID_ISSUANCE_AUTH_SERVER: 'https://hukid-id.zentrycore.com/realms/hukid',
+  HUKID_ISSUANCE_PUBLIC_URL: 'https://hukid.zentrycore.com',
+  HUKID_VAULT_MOUNT: 'transit',
+  HUKID_VAULT_KEK_NAME: 'hukid-claims-dek',
+};
+export const MANUAL = [
+  'HUKID_DB_ADMIN_PASSWORD', 'HUKID_VAULT_ADDR', 'HUKID_VAULT_TOKEN',
+  'HUKID_ISSUANCE_CLAIMS_KEY_CIPHERTEXT', 'HUKID_ISSUANCE_TENANT_ID',
+  'HUKID_STAGING_DB_HOST', 'HUKID_POSTGRES_CA_FILE',
+];
 const b64 = () => randomBytes(32).toString('base64');
 const hex = () => randomBytes(24).toString('hex');
 
@@ -34,6 +49,7 @@ export function generate(existing = {}, oidcClientSecret = '') {
   const fill = (name, make) => { if (!values[name]) { values[name] = make(); created.push(name); } };
   for (const name of KEYS) fill(name, b64);
   for (const [name, version] of Object.entries(VERSIONS)) fill(name, () => version);
+  for (const [name, value] of Object.entries(DEFAULTS)) fill(name, () => value);
   for (const role of ROLES) fill(`HUKID_RUNTIME_PASSWORD_${role}`, hex);
   if (oidcClientSecret) fill('HUKID_OIDC_CLIENT_SECRET', () => oidcClientSecret);
   for (const name of MANUAL) if (!(name in values)) { values[name] = ''; created.push(name); }

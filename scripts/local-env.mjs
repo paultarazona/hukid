@@ -14,13 +14,24 @@ import { fileURLToPath } from 'node:url';
 import { adminClient, reconcileKeycloak, verifyKeycloak } from './local-keycloak.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
-const state = path.join(root, '.cache/local');
+const localState = path.resolve(root, process.env.HUKID_LOCAL_STATE_DIR || '.cache/local');
+const cacheRoot = path.resolve(root, '.cache');
+const stateRelative = path.relative(cacheRoot, localState);
+if (stateRelative.startsWith('..') || path.isAbsolute(stateRelative)) throw new Error('HUKID_LOCAL_STATE_DIR debe estar dentro de .cache');
+const state = localState;
 const secretsPath = path.join(state, 'secrets.json');
 const pidsPath = path.join(state, 'pids.json');
 const pgBin = process.env.HUKID_PG_BIN || path.join(root, '.cache/toolchains/postgresql-18.6-5/pgsql/bin');
 const kcHome = path.join(root, '.cache/toolchains/keycloak-26.8.2/keycloak-26.8.2');
 const goBin = path.join(root, '.cache/toolchains/go1.27.3/go/bin');
-const PG_PORT = 54329, KC_PORT = 8081, API_PORT = 8080, CONSOLE_PORT = 5173;
+const portEnv = (name, fallback) => {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1 || n > 65535) throw new Error(`${name} inválido: ${raw}`);
+  return n;
+};
+const PG_PORT = portEnv('HUKID_PG_PORT', 54329), KC_PORT = portEnv('HUKID_KC_PORT', 8081), API_PORT = portEnv('HUKID_API_PORT', 8080), CONSOLE_PORT = portEnv('HUKID_CONSOLE_PORT', 5173);
 const REALM = 'hukid', CLIENT = 'hukid-console', OPERATOR = 'operador.local';
 const issuer = `http://127.0.0.1:${KC_PORT}/realms/${REALM}`;
 const consoleOrigin = `http://127.0.0.1:${CONSOLE_PORT}`;
@@ -52,7 +63,7 @@ const dsn = (user, password, database = 'hukid_local') => {
   u.username = user; u.password = password; return u.href;
 };
 function sql(database, input, s) {
-  return run(exe('psql'), ['-X', '-q', '-v', 'ON_ERROR_STOP=1', '-h', '127.0.0.1', '-p', String(PG_PORT), '-U', 'hukid_local_admin', '-d', database], { input, env: { ...process.env, PGPASSWORD: s.pgAdmin } });
+  return run(exe('psql'), ['-X', '-q', '-t', '-v', 'ON_ERROR_STOP=1', '-h', '127.0.0.1', '-p', String(PG_PORT), '-U', 'hukid_local_admin', '-d', database], { input, env: { ...process.env, PGPASSWORD: s.pgAdmin } });
 }
 function portFree(port) {
   return new Promise((resolve) => { const s = createServer(); s.once('error', () => resolve(false)); s.listen(port, '127.0.0.1', () => s.close(() => resolve(true))); });
@@ -74,15 +85,22 @@ async function waitHttp(url, label, tries = 600) {
 
 async function init() {
   mkdirSync(state, { recursive: true }); mkdirSync(path.join(root, '.cache/gotmp'), { recursive: true });
-  if (existsSync(secretsPath)) { provision(secrets()); console.log('OK: configuración local actualizada; datos y secretos conservados.'); return; }
+  if (existsSync(secretsPath)) {
+    const s = secrets();
+    startPostgres();
+    ensureLocalDatabase(s);
+    provision(s);
+    console.log('OK: configuración local actualizada; datos y secretos conservados.');
+    return;
+  }
   if (!(await portFree(PG_PORT))) throw new Error(`El puerto ${PG_PORT} está ocupado`);
-  const s = { pgAdmin: hex(), roles: {}, authKey: b64(), authKeyVersion: 'local-1', oidcClientSecret: hex(), kcAdminPassword: hex(), operatorPassword: hex(), invitationKey: b64(), invitationHmacKey: b64(), membersCursorKey: b64() };
+  const s = { pgAdmin: hex(), roles: {}, authKey: b64(), authKeyVersion: 'local-1', oidcClientSecret: hex(), kcAdminPassword: hex(), operatorPassword: hex(), invitationKey: b64(), invitationHmacKey: b64(), membersCursorKey: b64(), dashboardCursorKey: b64(), issuanceClaimsKey: b64() };
   const pwfile = path.join(state, 'init-password');
   writeFileSync(pwfile, s.pgAdmin, { mode: 0o600 });
   try { run(exe('initdb'), ['-D', path.join(state, 'pgdata'), '-U', 'hukid_local_admin', '--pwfile', pwfile, '--auth=scram-sha-256', '--encoding=UTF8', '--locale=C']); } finally { if (existsSync(pwfile)) unlinkSync(pwfile); }
   saveSecrets(s);
   startPostgres();
-  sql('postgres', 'CREATE DATABASE hukid_local;', s);
+  ensureLocalDatabase(s);
   provision(s);
   console.log('OK: PostgreSQL persistente (puerto %d), base hukid_local migrada y roles de runtime creados.', PG_PORT);
 }
@@ -90,20 +108,27 @@ async function init() {
 function provision(s) {
   startPostgres();
   run(path.join(goBin, 'go.exe'), ['run', './cmd/localdb', 'migrate'], { cwd: path.join(root, 'src/platform'), env: goEnv(s) });
-  for (const role of ['session', 'context', 'tenant', 'members', 'dashboard']) {
+  for (const role of ['session', 'context', 'tenant', 'members', 'dashboard', 'issuance']) {
     if (!s.roles[role]) { s.roles[role] = { login: `hukid_local_${role}`, pw: hex() }; saveSecrets(s); }
     const { login, pw } = s.roles[role];
     if (login !== `hukid_local_${role}` || !/^[a-zA-Z0-9_-]+$/.test(pw)) throw new Error('Credencial runtime local inválida');
     sql('hukid_local', `DO $local$ BEGIN IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname='${login}') THEN CREATE ROLE ${login} LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD '${pw}'; END IF; END $local$; GRANT hukid_${role}_runtime TO ${login};`, s);
   }
-  for (const key of ['dashboardCursorKey', 'membersCursorKey', 'invitationKey', 'invitationHmacKey']) if (!s[key]) s[key] = b64();
+  for (const key of ['dashboardCursorKey', 'membersCursorKey', 'invitationKey', 'invitationHmacKey', 'issuanceClaimsKey']) if (!s[key]) s[key] = b64();
   saveSecrets(s);
 }
 
+function ensureLocalDatabase(s) {
+  const exists = sql('postgres', "SELECT 1 FROM pg_database WHERE datname='hukid_local';", s).trim() === '1';
+  if (!exists) sql('postgres', 'CREATE DATABASE hukid_local;', s);
+}
+
 function kcEnv(s) {
-  return { ...process.env, KC_BOOTSTRAP_ADMIN_USERNAME: 'admin', KC_BOOTSTRAP_ADMIN_PASSWORD: s.kcAdminPassword };
+  const keycloakDatabase = path.join(state, 'keycloak-data', 'keycloak').replaceAll('\\', '/');
+  return { ...process.env, KC_DB: 'dev-file', KC_DB_URL: `jdbc:h2:file:${keycloakDatabase};NON_KEYWORDS=VALUE`, KC_BOOTSTRAP_ADMIN_USERNAME: 'admin', KC_BOOTSTRAP_ADMIN_PASSWORD: s.kcAdminPassword };
 }
 function kcStart(s) {
+  mkdirSync(path.join(state, 'keycloak-data'), { recursive: true });
   const log = openSync(path.join(state, 'keycloak.log'), 'a');
   const child = spawn('cmd.exe', ['/d', '/c', path.join(kcHome, 'bin', 'kc.bat'), 'start-dev', `--http-port=${KC_PORT}`, '--http-host=127.0.0.1', '--hostname-strict=false'], { cwd: kcHome, env: kcEnv(s), windowsHide: true, stdio: ['ignore', log, log] });
   closeSync(log); children.push(child); return child.pid;
@@ -120,7 +145,7 @@ async function keycloakInit() {
     username: OPERATOR, enabled: true, email: `${OPERATOR}@hukid.local`, emailVerified: true,
     requiredActions: ['CONFIGURE_TOTP'], credentials: [{ type: 'password', value: s.operatorPassword, temporary: false }],
   });
-  console.log('OK: realm %s, cliente %s y usuario %s. Contraseña inicial en .cache/local/secrets.json (operatorPassword); TOTP se configura en el primer login.', REALM, CLIENT, OPERATOR);
+  console.log('OK: realm %s, cliente %s y usuario %s. Contraseña inicial en %s (operatorPassword); TOTP se configura en el primer login.', REALM, CLIENT, OPERATOR, path.relative(root, secretsPath));
   console.log('Perfil operator reconciliado: ES256/at+jwt, Code+refresh, MFA por ejecuciones reales y LoA 2.');
   stopChildren();
 }
@@ -140,7 +165,7 @@ async function bootstrap() {
 function writePids(update) { writeFileSync(pidsPath, JSON.stringify({ ...readJson(pidsPath, {}), ...update }, null, 2)); }
 async function start() {
   const s = secrets();
-  if (!s.roles.members || !s.roles.dashboard || !s.dashboardCursorKey) throw new Error('Ejecuta local-env.mjs init para actualizar el perfil local');
+  if (!s.roles.members || !s.roles.dashboard || !s.roles.issuance || !s.dashboardCursorKey || !s.issuanceClaimsKey) throw new Error('Ejecuta local-env.mjs init para actualizar el perfil local');
   mkdirSync(path.join(root, '.cache/build'), { recursive: true });
   for (const [port, name] of [[API_PORT, 'API'], [CONSOLE_PORT, 'consola']]) if (!(await portFree(port))) throw new Error(`El puerto ${port} (${name}) está ocupado`);
   startPostgres();
@@ -151,13 +176,31 @@ async function start() {
   // The console has no access page, so it can be served as built; keep it apart from dist/.
   const outDir = path.join(state, 'console-dist');
   run(process.execPath, ['node_modules/vite/bin/vite.js', 'build', 'src/console', '--outDir', outDir, '--emptyOutDir'], { env: { ...process.env, HUKID_CONSOLE_API_TARGET: `http://127.0.0.1:${API_PORT}` } });
-  const policy = path.join(root, 'src/platform/config/auth.local.json');
+  const basePolicy = readJson(path.join(root, 'src/platform/config/auth.local.json'), {});
+  const policy = path.join(state, 'auth.local.runtime.json');
+  writeFileSync(policy, JSON.stringify({ ...basePolicy, issuer, consoleOrigin, redirectUri: `${consoleOrigin}/console/auth/callback` }, null, 2), { mode: 0o600 });
   const env = { ...process.env, HUKID_ENV: 'local', HUKID_AUTH_POLICY: policy, HUKID_LISTEN_ADDR: `127.0.0.1:${API_PORT}`, HUKID_CONSOLE_PROXY_ORIGIN: consoleOrigin, HUKID_SESSION_DATABASE_URL: dsn(s.roles.session.login, s.roles.session.pw), HUKID_CONTEXT_DATABASE_URL: dsn(s.roles.context.login, s.roles.context.pw), HUKID_TENANT_DATABASE_URL: dsn(s.roles.tenant.login, s.roles.tenant.pw), HUKID_OIDC_CLIENT_SECRET: s.oidcClientSecret, HUKID_AUTH_KEY: s.authKey, HUKID_AUTH_KEY_VERSION: s.authKeyVersion, HUKID_CONSOLE_API_TARGET: `http://127.0.0.1:${API_PORT}` };
   Object.assign(env, {
     HUKID_MEMBERS_DATABASE_URL: dsn(s.roles.members.login, s.roles.members.pw), HUKID_MEMBERS_POLICY: path.join(root, 'src/platform/config/user-management.test.json'), HUKID_MEMBERS_CURSOR_KEY: s.membersCursorKey,
     HUKID_INVITATION_KEY: s.invitationKey, HUKID_INVITATION_HMAC_KEY: s.invitationHmacKey, HUKID_INVITATION_KEY_VERSION: 'local-1',
     HUKID_DASHBOARD_DATABASE_URL: dsn(s.roles.dashboard.login, s.roles.dashboard.pw), HUKID_DASHBOARD_POLICY: path.join(root, 'src/platform/config/dashboard.test.json'), HUKID_DASHBOARD_CURSOR_KEY: s.dashboardCursorKey,
   });
+  const localVault = readJson(path.join(state, 'vault-runtime.json'), {});
+  const vaultAddr = process.env.HUKID_VAULT_ADDR || localVault.address;
+  const vaultToken = process.env.HUKID_VAULT_TOKEN || localVault.token;
+  if (vaultAddr && vaultToken) {
+    Object.assign(env, {
+      HUKID_ISSUANCE_DATABASE_URL: dsn(s.roles.issuance.login, s.roles.issuance.pw),
+      HUKID_ISSUANCE_AUTH_SERVER: process.env.HUKID_ISSUANCE_AUTH_SERVER || `http://127.0.0.1:${API_PORT}`,
+      ...(process.env.HUKID_ISSUANCE_PUBLIC_URL ? { HUKID_ISSUANCE_PUBLIC_URL: process.env.HUKID_ISSUANCE_PUBLIC_URL } : {}),
+      HUKID_ISSUANCE_CLAIMS_KEY: s.issuanceClaimsKey,
+      HUKID_ISSUANCE_CLAIMS_KEY_VERSION: 'local-1',
+      HUKID_VAULT_ADDR: vaultAddr,
+      HUKID_VAULT_TOKEN: vaultToken,
+      HUKID_VAULT_MOUNT: process.env.HUKID_VAULT_MOUNT || 'transit',
+      HUKID_VAULT_KEK_NAME: process.env.HUKID_VAULT_KEK_NAME || localVault.kekName || 'hukid-claims-kek',
+    });
+  }
   const spawnLogged = (cmd, args, name, e) => { const log = openSync(path.join(state, `${name}.log`), 'a'); const c = spawn(cmd, args, { cwd: root, env: e, windowsHide: true, stdio: ['ignore', log, log] }); closeSync(log); children.push(c); return c.pid; };
   const api = spawnLogged(path.join(root, '.cache/build/hukid-api.exe'), [], 'api', env);
   const web = spawnLogged(process.execPath, ['node_modules/vite/bin/vite.js', 'preview', 'src/console', '--outDir', outDir, '--host', '127.0.0.1', '--port', String(CONSOLE_PORT), '--strictPort'], 'console', env);

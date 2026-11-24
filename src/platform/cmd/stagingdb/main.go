@@ -15,7 +15,7 @@ import (
 
 func main() {
 	usage := "usage: stagingdb migrate | stagingdb runtime-logins | stagingdb bootstrap <issuer> <subject> <tenant name>\n" +
-		"env: HUKID_ENV=staging, HUKID_DATABASE_URL (hukid_staging, explicit sslmode); runtime-logins also reads HUKID_RUNTIME_PASSWORD_<ROLE> for session, context, tenant, members, dashboard, verification, and optionally HUKID_RUNTIME_PASSWORD_VERIFICATION_MAINTENANCE for the purge login"
+		"env: HUKID_ENV=staging, HUKID_DATABASE_URL (hukid_staging, explicit sslmode); runtime-logins also reads HUKID_RUNTIME_PASSWORD_<ROLE> for session, context, tenant, members, dashboard, verification, issuance, and optionally HUKID_RUNTIME_PASSWORD_VERIFICATION_MAINTENANCE for the purge login"
 	args := os.Args[1:]
 	valid := len(args) == 1 && (args[0] == "migrate" || args[0] == "runtime-logins") || len(args) == 4 && args[0] == "bootstrap"
 	if !valid {
