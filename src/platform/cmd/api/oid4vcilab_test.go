@@ -216,10 +216,14 @@ func TestVCILabPersistentKeyAndDualMountE2E(t *testing.T) {
 	// 3. Create issuance request via /v1/issuance-requests.
 	reqBody, _ := json.Marshal(issuance.IssuanceRequestInput{
 		IssuerID:             issuerID,
-		CredentialDefinition: "unas-certificate@1.0.0",
+		CredentialDefinition: issuance.CanonicalEventParticipationRef(),
 		Claims: map[string]any{
-			"participantName": "Carlos Mendoza",
-			"eventName":       "Jornada Cloud UNAS",
+			"participantName":   "Carlos Mendoza",
+			"eventTitle":        "Jornada Cloud UNAS",
+			"organizerName":     "IncubaUNAS",
+			"eventDate":         "2026-11-25",
+			"participationRole": "attendee",
+			"certificateNumber": "CERT-LAB-0001",
 		},
 	})
 	irReq := httptest.NewRequest(http.MethodPost, "/v1/issuance-requests", bytes.NewReader(reqBody))

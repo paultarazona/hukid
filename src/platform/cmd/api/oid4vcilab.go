@@ -171,6 +171,19 @@ func configureOID4VCILab(ctx context.Context, address string, out io.Writer, now
 	if now == nil {
 		now = time.Now
 	}
+	if rawIssuer := strings.TrimSpace(os.Getenv(vciLabIssuerURI)); rawIssuer != "" {
+		parsed, parseErr := url.Parse(rawIssuer)
+		if parseErr != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.Path == "" {
+			return nil, nil, errVCILabConfig
+		}
+		base := strings.TrimSuffix(rawIssuer, "/")
+		if i := strings.LastIndexByte(base, '/'); i >= 0 {
+			base = base[:i]
+		}
+		if err := issuance.SetIssuerPrefix(base); err != nil {
+			return nil, nil, errVCILabConfig
+		}
+	}
 
 	slug := defaultString(os.Getenv(vciLabSlug), vciLabDefaultSlug)
 	if issuance.ValidateIssuerIdentifier(issuance.IssuerPrefix+slug) != nil || issuance.ReservedSlug(slug) {
@@ -207,10 +220,7 @@ func configureOID4VCILab(ctx context.Context, address string, out io.Writer, now
 	}
 	defer clear(claimsKey)
 
-	issuerURI := defaultString(os.Getenv(vciLabIssuerURI), issuance.IssuerPrefix+slug)
-	if parsed, err := url.Parse(issuerURI); err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.Path == "" {
-		return nil, nil, errVCILabConfig
-	}
+	issuerURI := issuance.IssuerPrefix + slug
 	pubJWK, err := issuance.ExportPublicJWK(&privKey.PublicKey, kid)
 	if err != nil {
 		return nil, nil, errVCILabConfig
@@ -303,6 +313,9 @@ func configureOID4VCILab(ctx context.Context, address string, out io.Writer, now
 			vciLabDefaultIssuerID,
 			issuerURI,
 		)
+		// En local el issuer puede ser HTTP para que el emulador llegue mediante
+		// adb reverse; los contextos VC siguen siendo HTTPS y estables.
+		certDef.Contexts = []string{issuance.CertificateContext}
 		if err := defs.CreateDraft(certDef, "vci-lab-seed", "cor-seed-d1", seedTime); err != nil {
 			return nil, nil, errVCILabConfig
 		}
