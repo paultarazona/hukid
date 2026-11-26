@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { AuthError } from '../authentication/client';
 import type { Identity } from '../authentication/client';
 import { date } from '../user-management/client';
+import { NewVerification } from './NewVerification';
 import { filterNames, message, readVerificationPage, resultNames, statusNames } from './client';
 import type { StatusFilter, VerificationPage } from './client';
 
@@ -26,9 +27,9 @@ function Digest({ value }: { value?: string }) {
   </span>;
 }
 
-// Read-only list (ADR-0033 #9): result, codes and digest, never the JWS or claims.
-// Starting a verification stays an operator action outside this view.
-export function Verifications({ identity, onAccessError }: { identity: Identity; onAccessError: (status: number) => void }) {
+// The list (ADR-0033 #9) shows result, codes and digest, never the JWS or claims.
+// Starting a verification needs verification:start and recent MFA (ADR-0037).
+export function Verifications({ identity, onAccessError, onStepUp }: { identity: Identity; onAccessError: (status: number) => void; onStepUp: () => void }) {
   const [status, setStatus] = useState<StatusFilter>('');
   const [cursor, setCursor] = useState('');
   const [page, setPage] = useState<VerificationPage | null>(null);
@@ -57,6 +58,8 @@ export function Verifications({ identity, onAccessError }: { identity: Identity;
 
   if (!canRead) return <section aria-label="Verificaciones"><p role="status">No tienes permiso para consultar las verificaciones. Solicita acceso a tu administrador.</p></section>;
   return <section id="verifications" className="dashboard" aria-label="Verificaciones">
+    {identity.context!.capabilities.includes('verification:start') &&
+      <NewVerification identity={identity} onStepUp={onStepUp} onChanged={() => { setCursor(''); setReload(n => n + 1); }} />}
     <div className="verification-toolbar">
       <label>Estado<select value={status} onChange={e => { setCursor(''); setStatus(e.target.value as StatusFilter); }}>
         {(Object.keys(filterNames) as StatusFilter[]).map(key => <option key={key} value={key}>{filterNames[key]}</option>)}</select></label>
@@ -66,7 +69,7 @@ export function Verifications({ identity, onAccessError }: { identity: Identity;
       <h2 id="verifications-title" ref={heading} tabIndex={-1}>Sesiones de verificación</h2>
       {loading && <p role="status">Cargando verificaciones…</p>}
       {error && <p role="alert">{error}</p>}
-      {page && (!page.items.length ? <p role="status">No hay verificaciones{status ? ' con este estado' : ''}. Las sesiones se inician desde la API de operador.</p> :
+      {page && (!page.items.length ? <p role="status">No hay verificaciones{status ? ' con este estado' : ''}.</p> :
         <div className="table-wrap"><table className="data-table"><caption className="sr-only">Sesiones de verificación de la organización, de la más reciente a la más antigua</caption>
           <thead><tr><th scope="col">Estado</th><th scope="col">Resultado</th><th scope="col">Códigos</th><th scope="col">Creada (UTC)</th><th scope="col">Caduca (UTC)</th><th scope="col">Sesión</th><th scope="col">Huella del reporte</th></tr></thead>
           <tbody>{page.items.map(item => <tr key={item.sessionId}>

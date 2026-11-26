@@ -11,6 +11,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, openSync, closeSync
 import { createServer } from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { composeFor } from './local-docker.mjs';
+import { ensureLabTls, startVerifierTls, verifierFiles } from './local-verifier.mjs';
 import { adminClient, reconcileKeycloak, verifyKeycloak } from './local-keycloak.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -31,23 +33,31 @@ const portEnv = (name, fallback) => {
   if (!Number.isInteger(n) || n < 1 || n > 65535) throw new Error(`${name} inválido: ${raw}`);
   return n;
 };
+const VERIFIER_PORT = portEnv('HUKID_VERIFIER_PORT', 8443);
 const PG_PORT = portEnv('HUKID_PG_PORT', 54329), KC_PORT = portEnv('HUKID_KC_PORT', 8081), API_PORT = portEnv('HUKID_API_PORT', 8080), CONSOLE_PORT = portEnv('HUKID_CONSOLE_PORT', 5173);
 const REALM = 'hukid', CLIENT = 'hukid-console', OPERATOR = 'operador.local';
 const issuer = `http://127.0.0.1:${KC_PORT}/realms/${REALM}`;
 const consoleOrigin = `http://127.0.0.1:${CONSOLE_PORT}`;
-const exe = (name) => path.join(pgBin, process.platform === 'win32' ? `${name}.exe` : name);
+const windows = process.platform === 'win32';
+const bin = (name) => (windows ? `${name}.exe` : name);
+const exe = (name) => path.join(pgBin, bin(name));
+// Windows runs the native toolchains; elsewhere PostgreSQL and Keycloak run in containers.
+const compose = composeFor(state);
 const b64 = () => randomBytes(32).toString('base64');
 const hex = () => randomBytes(24).toString('hex');
 const children = [];
 let ownsPostgres = false;
-function killTree(pid) { spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }); }
+function killTree(pid) {
+  if (windows) spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true });
+  else { try { process.kill(pid); } catch {} }
+}
 function stopChildren() {
   const owned = children.splice(0).filter(c => c.pid);
   const pids = readJson(pidsPath, {});
   for (const c of owned) { killTree(c.pid); for (const [name, pid] of Object.entries(pids)) if (pid === c.pid) delete pids[name]; }
   if (existsSync(pidsPath)) writeFileSync(pidsPath, JSON.stringify(pids));
 }
-process.on('SIGINT', () => { stopChildren(); if (pgRunning()) { try { run(exe('pg_ctl'), ['-D', path.join(state, 'pgdata'), '-m', 'fast', '-w', 'stop']); } catch {} } console.log('Detenido. Los datos se conservan.'); process.exit(0); });
+process.on('SIGINT', () => { stopChildren(); if (pgRunning()) { try { stopPostgres(); } catch {} } console.log('Detenido. Los datos se conservan.'); process.exit(0); });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function run(cmd, args, options = {}) {
@@ -63,14 +73,24 @@ const dsn = (user, password, database = 'hukid_local') => {
   u.username = user; u.password = password; return u.href;
 };
 function sql(database, input, s) {
+  if (!windows) return compose(['exec', '-T', '-e', 'PGPASSWORD', 'postgres', 'psql', '-X', '-q', '-t', '-v', 'ON_ERROR_STOP=1', '-h', '127.0.0.1', '-U', 'hukid_local_admin', '-d', database], { input, env: { PGPASSWORD: s.pgAdmin } });
   return run(exe('psql'), ['-X', '-q', '-t', '-v', 'ON_ERROR_STOP=1', '-h', '127.0.0.1', '-p', String(PG_PORT), '-U', 'hukid_local_admin', '-d', database], { input, env: { ...process.env, PGPASSWORD: s.pgAdmin } });
 }
 function portFree(port) {
   return new Promise((resolve) => { const s = createServer(); s.once('error', () => resolve(false)); s.listen(port, '127.0.0.1', () => s.close(() => resolve(true))); });
 }
-const pgRunning = () => spawnSync(exe('pg_ctl'), ['-D', path.join(state, 'pgdata'), 'status'], { windowsHide: true }).status === 0;
+const pgRunning = () => !windows ? compose(['ps', '--status', 'running', '-q', 'postgres']).trim() !== '' : spawnSync(exe('pg_ctl'), ['-D', path.join(state, 'pgdata'), 'status'], { windowsHide: true }).status === 0;
+function stopPostgres() {
+  if (!windows) compose(['stop', 'postgres']);
+  else run(exe('pg_ctl'), ['-D', path.join(state, 'pgdata'), '-m', 'fast', '-w', 'stop']);
+}
 function startPostgres() {
   if (pgRunning()) return;
+  if (!windows) {
+    compose(['up', '-d', '--wait', 'postgres'], { env: { HUKID_LOCAL_PG_PASSWORD: secrets().pgAdmin } });
+    ownsPostgres = true;
+    return;
+  }
   const log = openSync(path.join(state, 'startup.log'), 'a');
   try { run(exe('pg_ctl'), ['-D', path.join(state, 'pgdata'), '-l', path.join(state, 'postgres.log'), '-o', `-h 127.0.0.1 -p ${PG_PORT} -c log_statement=none`, '-w', '-t', '30', 'start'], { stdio: ['ignore', log, log] }); } finally { closeSync(log); }
   ownsPostgres = true;
@@ -95,9 +115,11 @@ async function init() {
   }
   if (!(await portFree(PG_PORT))) throw new Error(`El puerto ${PG_PORT} está ocupado`);
   const s = { pgAdmin: hex(), roles: {}, authKey: b64(), authKeyVersion: 'local-1', oidcClientSecret: hex(), kcAdminPassword: hex(), operatorPassword: hex(), invitationKey: b64(), invitationHmacKey: b64(), membersCursorKey: b64(), dashboardCursorKey: b64(), issuanceClaimsKey: b64() };
-  const pwfile = path.join(state, 'init-password');
-  writeFileSync(pwfile, s.pgAdmin, { mode: 0o600 });
-  try { run(exe('initdb'), ['-D', path.join(state, 'pgdata'), '-U', 'hukid_local_admin', '--pwfile', pwfile, '--auth=scram-sha-256', '--encoding=UTF8', '--locale=C']); } finally { if (existsSync(pwfile)) unlinkSync(pwfile); }
+  if (windows) {
+    const pwfile = path.join(state, 'init-password');
+    writeFileSync(pwfile, s.pgAdmin, { mode: 0o600 });
+    try { run(exe('initdb'), ['-D', path.join(state, 'pgdata'), '-U', 'hukid_local_admin', '--pwfile', pwfile, '--auth=scram-sha-256', '--encoding=UTF8', '--locale=C']); } finally { if (existsSync(pwfile)) unlinkSync(pwfile); }
+  }
   saveSecrets(s);
   startPostgres();
   ensureLocalDatabase(s);
@@ -107,14 +129,14 @@ async function init() {
 
 function provision(s) {
   startPostgres();
-  run(path.join(goBin, 'go.exe'), ['run', './cmd/localdb', 'migrate'], { cwd: path.join(root, 'src/platform'), env: goEnv(s) });
-  for (const role of ['session', 'context', 'tenant', 'members', 'dashboard', 'issuance']) {
+  run(path.join(goBin, bin('go')), ['run', './cmd/localdb', 'migrate'], { cwd: path.join(root, 'src/platform'), env: goEnv(s) });
+  for (const role of ['session', 'context', 'tenant', 'members', 'dashboard', 'issuance', 'verification']) {
     if (!s.roles[role]) { s.roles[role] = { login: `hukid_local_${role}`, pw: hex() }; saveSecrets(s); }
     const { login, pw } = s.roles[role];
     if (login !== `hukid_local_${role}` || !/^[a-zA-Z0-9_-]+$/.test(pw)) throw new Error('Credencial runtime local inválida');
     sql('hukid_local', `DO $local$ BEGIN IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname='${login}') THEN CREATE ROLE ${login} LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD '${pw}'; END IF; END $local$; GRANT hukid_${role}_runtime TO ${login};`, s);
   }
-  for (const key of ['dashboardCursorKey', 'membersCursorKey', 'invitationKey', 'invitationHmacKey', 'issuanceClaimsKey']) if (!s[key]) s[key] = b64();
+  for (const key of ['dashboardCursorKey', 'membersCursorKey', 'invitationKey', 'invitationHmacKey', 'issuanceClaimsKey', 'verificationKey']) if (!s[key]) s[key] = b64();
   saveSecrets(s);
 }
 
@@ -128,6 +150,7 @@ function kcEnv(s) {
   return { ...process.env, KC_DB: 'dev-file', KC_DB_URL: `jdbc:h2:file:${keycloakDatabase};NON_KEYWORDS=VALUE`, KC_BOOTSTRAP_ADMIN_USERNAME: 'admin', KC_BOOTSTRAP_ADMIN_PASSWORD: s.kcAdminPassword };
 }
 function kcStart(s) {
+  if (!windows) { compose(['up', '-d', 'keycloak'], { env: { HUKID_LOCAL_KC_PASSWORD: s.kcAdminPassword } }); return undefined; }
   mkdirSync(path.join(state, 'keycloak-data'), { recursive: true });
   const log = openSync(path.join(state, 'keycloak.log'), 'a');
   const child = spawn('cmd.exe', ['/d', '/c', path.join(kcHome, 'bin', 'kc.bat'), 'start-dev', `--http-port=${KC_PORT}`, '--http-host=127.0.0.1', '--hostname-strict=false'], { cwd: kcHome, env: kcEnv(s), windowsHide: true, stdio: ['ignore', log, log] });
@@ -158,8 +181,35 @@ async function bootstrap() {
   const id = matches[0]?.id;
   if (!id) throw new Error('No se encontró el usuario en Keycloak; ejecuta keycloak-init (con Keycloak activo).');
   startPostgres();
-  run(path.join(goBin, 'go.exe'), ['run', './cmd/localdb', 'bootstrap', issuer, id, process.env.HUKID_TENANT_NAME || 'Organización local'], { cwd: path.join(root, 'src/platform'), env: goEnv(s) });
+  run(path.join(goBin, bin('go')), ['run', './cmd/localdb', 'bootstrap', issuer, id, process.env.HUKID_TENANT_NAME || 'Organización local'], { cwd: path.join(root, 'src/platform'), env: goEnv(s) });
   console.log('OK: identidad %s vinculada como tenant_admin (idempotente).', id);
+}
+
+// Configures the tenant verifier (ADR-0037): trusted issuer keys come from the
+// running API's JWKS, and the tenant signing key is created only once.
+async function verifierInit() {
+  const slug = process.argv[3];
+  if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(slug ?? '')) throw new Error('Uso: node scripts/local-env.mjs verifier-init <slug-del-emisor>');
+  provision(secrets());
+  const s = secrets();
+  const f = ensureLabTls(state);
+  const query = (input) => sql('hukid_local', input, s).trim();
+  const [tenant, issuer] = query(`SELECT tenant_id||' '||issuer_uri FROM tenancy.issuers WHERE slug='${slug}' AND state='active';`).split(' ');
+  if (!tenant || !issuer) throw new Error(`No hay un emisor activo con slug ${slug}`);
+  const response = await fetch(`http://127.0.0.1:${API_PORT}/${slug}/.well-known/jwks.json`, { signal: AbortSignal.timeout(5000) });
+  if (!response.ok) throw new Error('No se pudo leer el JWKS del emisor; ¿está la API activa?');
+  const keys = (await response.json()).keys.map((jwk) => ({ issuer, kid: jwk.kid, jwk }));
+  writeFileSync(f.issuerKeys, JSON.stringify(keys, null, 2));
+  const verifierctl = (args) => run(path.join(goBin, bin('go')), ['run', './cmd/verifierctl', ...args], {
+    cwd: path.join(root, 'src/platform'), env: { ...goEnv(s), HUKID_VERIFICATION_KEY: s.verificationKey, HUKID_VERIFICATION_KEY_VERSION: 'local-1' },
+  });
+  verifierctl(['configure', tenant, 'x509_san_dns:127.0.0.1', `https://127.0.0.1:${VERIFIER_PORT}/oid4vp/response`]);
+  if (!existsSync(f.publicKey)) {
+    const line = verifierctl(['provision-key', tenant]).split('\n').find((l) => l.startsWith('public '));
+    if (!line) throw new Error('verifierctl no devolvió la clave pública');
+    writeFileSync(f.publicKey, line.slice('public '.length));
+  }
+  console.log('OK: verificador configurado (%d clave(s) de emisor de confianza). Reinicia con stop y start.', keys.length);
 }
 
 function writePids(update) { writeFileSync(pidsPath, JSON.stringify({ ...readJson(pidsPath, {}), ...update }, null, 2)); }
@@ -172,7 +222,7 @@ async function start() {
   if (await portFree(KC_PORT)) { const pid = kcStart(s); writePids({ keycloak: pid }); }
   await waitHttp(`${issuer}/.well-known/openid-configuration`, 'Keycloak');
   await verifyKeycloak(await adminClient(`http://127.0.0.1:${KC_PORT}`, s.kcAdminPassword), { realm: REALM, client: CLIENT, origin: consoleOrigin });
-  run(path.join(goBin, 'go.exe'), ['build', '-o', path.join(root, '.cache/build/hukid-api.exe'), './cmd/api'], { cwd: path.join(root, 'src/platform'), env: goEnv(s) });
+  run(path.join(goBin, bin('go')), ['build', '-o', path.join(root, '.cache/build', bin('hukid-api')), './cmd/api'], { cwd: path.join(root, 'src/platform'), env: goEnv(s) });
   // The console has no access page, so it can be served as built; keep it apart from dist/.
   const outDir = path.join(state, 'console-dist');
   run(process.execPath, ['node_modules/vite/bin/vite.js', 'build', 'src/console', '--outDir', outDir, '--emptyOutDir'], { env: { ...process.env, HUKID_CONSOLE_API_TARGET: `http://127.0.0.1:${API_PORT}` } });
@@ -201,27 +251,44 @@ async function start() {
       HUKID_VAULT_KEK_NAME: process.env.HUKID_VAULT_KEK_NAME || localVault.kekName || 'hukid-claims-kek',
     });
   }
+  const verifier = verifierFiles(state);
+  const verifierReady = existsSync(verifier.publicKey) && existsSync(verifier.issuerKeys);
+  if (verifierReady) {
+    if (!(await portFree(VERIFIER_PORT))) throw new Error(`El puerto ${VERIFIER_PORT} (verificador) está ocupado`);
+    Object.assign(env, {
+      HUKID_VERIFICATION_DATABASE_URL: dsn(s.roles.verification.login, s.roles.verification.pw), HUKID_VERIFICATION_KEY: s.verificationKey,
+      HUKID_VERIFICATION_KEY_VERSION: 'local-1', HUKID_VERIFICATION_ISSUER_KEYS: verifier.issuerKeys,
+    });
+  }
   const spawnLogged = (cmd, args, name, e) => { const log = openSync(path.join(state, `${name}.log`), 'a'); const c = spawn(cmd, args, { cwd: root, env: e, windowsHide: true, stdio: ['ignore', log, log] }); closeSync(log); children.push(c); return c.pid; };
-  const api = spawnLogged(path.join(root, '.cache/build/hukid-api.exe'), [], 'api', env);
+  const api = spawnLogged(path.join(root, '.cache/build', bin('hukid-api')), [], 'api', env);
   const web = spawnLogged(process.execPath, ['node_modules/vite/bin/vite.js', 'preview', 'src/console', '--outDir', outDir, '--host', '127.0.0.1', '--port', String(CONSOLE_PORT), '--strictPort'], 'console', env);
   writePids({ api, web });
   await waitHttp(`http://127.0.0.1:${API_PORT}/healthz`, 'API'); await waitHttp(consoleOrigin, 'Consola');
+  if (verifierReady) {
+    const front = await startVerifierTls(state, VERIFIER_PORT, API_PORT);
+    // "stop" runs in another process and only kills the children: when the API
+    // goes away the front must close too, or this process keeps the port.
+    children.find((c) => c.pid === api)?.once('exit', () => { front.closeAllConnections(); front.close(); });
+    console.log('Verificador HTTPS de laboratorio en https://127.0.0.1:%d (solo /oid4vp/*)', VERIFIER_PORT);
+  }
   console.log('LISTO %s  (Keycloak %s). Detener: node scripts/local-env.mjs stop', consoleOrigin, issuer);
 }
 function stop() {
   const pids = readJson(pidsPath, {});
   for (const [name, pid] of Object.entries(pids)) { if (name === 'keycloak') continue; try { process.kill(pid); } catch {} }
-  if (pids.keycloak) spawnSync('taskkill', ['/PID', String(pids.keycloak), '/T', '/F'], { windowsHide: true });
-  if (pgRunning()) run(exe('pg_ctl'), ['-D', path.join(state, 'pgdata'), '-m', 'fast', '-w', 'stop']);
+  if (!windows) compose(['stop', 'keycloak']);
+  else if (pids.keycloak) killTree(pids.keycloak);
+  if (pgRunning()) stopPostgres();
   writeFileSync(pidsPath, '{}');
   console.log('Detenido. Los datos de PostgreSQL y Keycloak se conservan.');
 }
 
-const commands = { init, 'keycloak-init': keycloakInit, bootstrap, start, stop };
+const commands = { init, 'keycloak-init': keycloakInit, 'verifier-init': verifierInit, bootstrap, start, stop };
 const command = process.argv[2];
-if (!commands[command]) { console.error('Uso: node scripts/local-env.mjs init|keycloak-init|bootstrap|start|stop'); process.exit(1); }
+if (!commands[command]) { console.error('Uso: node scripts/local-env.mjs init|keycloak-init|verifier-init <slug>|bootstrap|start|stop'); process.exit(1); }
 try { await commands[command](); } catch (error) {
   stopChildren();
-  if (ownsPostgres && pgRunning()) { try { run(exe('pg_ctl'), ['-D', path.join(state, 'pgdata'), '-m', 'fast', '-w', 'stop']); } catch {} }
+  if (ownsPostgres && pgRunning()) { try { stopPostgres(); } catch {} }
   console.error(error.message); process.exit(1);
 }

@@ -111,6 +111,7 @@ type Service struct {
 	aead    cipher.AEAD
 	backend Backend
 	mem     *memoryBackend
+	passes  passStore
 }
 
 // NewService validates the configuration and builds the service.

@@ -188,6 +188,9 @@ type Tx interface {
 	AllocateStatusSlot(issuerID, purpose string, listSize int, newListID func() (string, error), signInitial func(listID string, rawBits []byte) (jwt string, validFrom, validUntil time.Time, err error), now time.Time) (string, int, error)
 	SaveIssuedCredential(rec IssuedCredentialRecord) error
 	LockIssuedCredential(credentialID string) (IssuedCredentialRecord, bool, error)
+	// FindIssuedCredentialByDigest finds the credential whose exact signed bytes
+	// have this "sha256:" digest.
+	FindIssuedCredentialByDigest(digest string) (IssuedCredentialRecord, bool, error)
 	ListAdminCredentials(filter AdminListFilter) ([]IssuedCredentialRecord, error)
 	LockStatusList(issuerID, listID string) (StatusListRecord, bool, error)
 	GetPublishedStatusList(issuerID, purpose, listID string) (StatusListRecord, bool, error)
@@ -1026,6 +1029,15 @@ func (t *memoryTx) LockIssuedCredential(credentialID string) (IssuedCredentialRe
 		return IssuedCredentialRecord{}, false, nil
 	}
 	return *rec, true, nil
+}
+
+func (t *memoryTx) FindIssuedCredentialByDigest(digest string) (IssuedCredentialRecord, bool, error) {
+	for _, rec := range t.m.issuedCreds {
+		if rec.TenantID == t.tenantID && rec.Digest == digest {
+			return *rec, true, nil
+		}
+	}
+	return IssuedCredentialRecord{}, false, nil
 }
 
 func (t *memoryTx) ListAdminCredentials(filter AdminListFilter) ([]IssuedCredentialRecord, error) {

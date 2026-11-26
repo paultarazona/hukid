@@ -53,6 +53,24 @@ export async function readVerificationPage(identity: Identity, status: StatusFil
   return value;
 }
 
+export interface StartedVerification { sessionId: string; launchUri: string; expiresAt: string }
+
+const base = (identity: Identity) => `/console/api/tenants/${encodeURIComponent(identity.activeTenantId!)}/verification-sessions`;
+
+// Starting needs CSRF and recent MFA; the server decides both (ADR-0037).
+export async function startVerification(identity: Identity, signal: AbortSignal): Promise<StartedVerification> {
+  const value: any = await (await request(base(identity), signal, identity.csrfToken, { ttlSeconds: 300 }, { method: 'POST' })).json();
+  if (!value || typeof value.sessionId !== 'string' || !uuid.test(value.sessionId) || typeof value.launchUri !== 'string' ||
+    !value.launchUri.startsWith('openid4vp://') || !timestamp(value.expiresAt)) throw new AuthError(503, 'invalid_response');
+  return value as StartedVerification;
+}
+
+export async function readVerification(identity: Identity, sessionId: string, signal: AbortSignal): Promise<VerificationSession> {
+  const value: unknown = await (await request(`${base(identity)}/${encodeURIComponent(sessionId)}`, signal)).json();
+  if (!validSession(value) || value.sessionId !== sessionId) throw new AuthError(503, 'invalid_response');
+  return value;
+}
+
 export function message(cause: unknown): string {
   if (cause instanceof AuthError) {
     if (cause.status === 403 || cause.status === 404) return 'Tu acceso cambió. Se ha comprobado el contexto; revisa la organización y tus permisos antes de reintentar.';

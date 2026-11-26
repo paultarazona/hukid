@@ -14,6 +14,7 @@ const (
 	maxIntegrationBody = 64 << 10
 	maxCredentialBody  = 32 << 10
 	maxTokenBody       = 8 << 10
+	maxPassBody        = 96 << 10
 )
 
 // IssuanceHandler serves the Phase 3 surface: the private Integration API
@@ -27,6 +28,9 @@ type IssuanceHandler struct {
 // Routes registers the Phase 3–4 endpoints on mux.
 func (h *IssuanceHandler) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/issuance-requests", h.createRequest)
+	mux.HandleFunc("POST /v1/passes/nonce", h.passNonce)
+	mux.HandleFunc("POST /v1/passes", h.createPass)
+	mux.HandleFunc("POST /v1/pass-verifications", h.verifyPass)
 	mux.HandleFunc("GET /v1/issuance-requests/{id}", h.getRequest)
 	mux.HandleFunc("DELETE /v1/issuance-requests/{id}", h.cancelRequest)
 	mux.HandleFunc("POST /v1/credentials/{id}/suspensions", h.suspendCredential)

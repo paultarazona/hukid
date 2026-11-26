@@ -159,19 +159,21 @@ class Oid4vpPresentationAdapter implements PresentationAdapter {
     }
 
     final kid = header['kid'] is String ? header['kid'] as String : '';
-    var signatureVerified = false;
-    if (_verifierSigningKeys.isNotEmpty) {
-      final verificationKey = _verifierSigningKeys[kid];
-      if (verificationKey == null) {
-        throw FormatException('kid del validador desconocido: $kid');
-      }
-      final sigBytes = base64UrlNoPadDecode(parts[2]);
-      final signingInput = utf8.encode('${parts[0]}.${parts[1]}');
-      if (!P256Curve.verifyEs256(verificationKey, signingInput, sigBytes)) {
-        throw const FormatException('firma del request object inválida');
-      }
-      signatureVerified = true;
+    // A request whose signer is unknown is never shown to the holder: without
+    // trusted keys the wallet cannot present at all (ADR-0037).
+    if (_verifierSigningKeys.isEmpty) {
+      throw const FormatException('no hay validadores de confianza configurados');
     }
+    final verificationKey = _verifierSigningKeys[kid];
+    if (verificationKey == null) {
+      throw FormatException('kid del validador desconocido: $kid');
+    }
+    final requestSignature = base64UrlNoPadDecode(parts[2]);
+    final requestSigningInput = utf8.encode('${parts[0]}.${parts[1]}');
+    if (!P256Curve.verifyEs256(verificationKey, requestSigningInput, requestSignature)) {
+      throw const FormatException('firma del request object inválida');
+    }
+    const signatureVerified = true;
 
     if (payload['client_id'] != launch.clientId ||
         payload['iss'] != launch.clientId) {

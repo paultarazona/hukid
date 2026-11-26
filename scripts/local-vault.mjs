@@ -4,6 +4,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, openSync, closeSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { composeFor } from './local-docker.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const state = path.resolve(root, process.env.HUKID_LOCAL_STATE_DIR || '.cache/local-issuer');
@@ -17,6 +18,8 @@ const runtimePath = path.join(state, 'vault-runtime.json');
 const pidPath = path.join(state, 'vault.pid');
 const vaultBin = process.env.HUKID_VAULT_BIN || path.join(root, '.cache/toolchains/vault-1.18.0/vault.exe');
 const port = Number(process.env.HUKID_VAULT_PORT || 18200);
+const windows = process.platform === 'win32';
+const compose = composeFor(state);
 const address = `http://127.0.0.1:${port}`;
 const mount = 'transit';
 const kekName = 'hukid-claims-kek';
@@ -70,6 +73,7 @@ function ensureConfig() {
 async function startServer() {
   const current = await status();
   if (current) return current;
+  if (!windows) { compose(['up', '-d', 'vault']); return waitForServer(); }
   const log = openSync(path.join(state, 'vault.log'), 'a');
   const child = spawn(vaultBin, ['server', `-config=${configPath}`], { cwd: root, windowsHide: true, detached: true, stdio: ['ignore', log, log] });
   closeSync(log);
@@ -82,8 +86,10 @@ async function startServer() {
 async function initialize(current) {
   let secrets;
   if (!current.initialized) {
-    const initialized = JSON.parse(run(['operator', 'init', '-key-shares=1', '-key-threshold=1', '-format=json']));
-    secrets = { unsealKey: initialized.unseal_keys_b64[0], rootToken: initialized.root_token };
+    const initialized = windows
+      ? JSON.parse(run(['operator', 'init', '-key-shares=1', '-key-threshold=1', '-format=json']))
+      : await api('', 'PUT', 'sys/init', { secret_shares: 1, secret_threshold: 1 });
+    secrets = { unsealKey: (initialized.unseal_keys_b64 ?? initialized.keys_base64)[0], rootToken: initialized.root_token };
     writeFileSync(secretsPath, JSON.stringify(secrets, null, 2), { mode: 0o600 });
   } else {
     if (!existsSync(secretsPath)) throw new Error(`Vault ya está inicializado, pero falta ${path.relative(root, secretsPath)}; no se puede desellar sin su clave local.`);
@@ -124,10 +130,10 @@ async function configureTransit(rootToken) {
 }
 
 async function start() {
-  if (!existsSync(vaultBin)) throw new Error(`No se encontró Vault en ${path.relative(root, vaultBin)}; instala la versión 1.18.0 en .cache/toolchains/vault-1.18.0 o define HUKID_VAULT_BIN.`);
+  if (windows && !existsSync(vaultBin)) throw new Error(`No se encontró Vault en ${path.relative(root, vaultBin)}; instala la versión 1.18.0 en .cache/toolchains/vault-1.18.0 o define HUKID_VAULT_BIN.`);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('HUKID_VAULT_PORT inválido');
   mkdirSync(state, { recursive: true });
-  ensureConfig();
+  if (windows) ensureConfig();
   const current = await startServer();
   const secrets = await initialize(current);
   await configureTransit(secrets.rootToken);
@@ -135,6 +141,7 @@ async function start() {
 }
 
 function stop() {
+  if (!windows) { compose(['stop', 'vault']); console.log('Vault local detenido; su estado persistente se conservó.'); return; }
   if (!existsSync(pidPath)) { console.log('Vault local no tiene PID registrado; no se detuvo ningún proceso.'); return; }
   const pid = Number(readFileSync(pidPath, 'utf8').trim());
   if (!Number.isInteger(pid) || pid < 1) throw new Error('PID de Vault local inválido');
