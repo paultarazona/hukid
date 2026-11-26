@@ -5,6 +5,7 @@ package bootstrap
 import (
 	"errors"
 	"net"
+	"os"
 	"net/http"
 	"strconv"
 )
@@ -17,7 +18,8 @@ func ListenAddress(value string) (string, error) {
 	host, port, err := net.SplitHostPort(value)
 	ip := net.ParseIP(host)
 	number, portErr := strconv.Atoi(port)
-	if err != nil || ip == nil || !ip.IsLoopback() || portErr != nil || number < 1 || number > 65535 {
+	containerDev := os.Getenv("HUKID_CONTAINER_DEV") == "1" && os.Getenv("HUKID_ENV") == ""
+	if err != nil || ip == nil || (!ip.IsLoopback() && !(containerDev && ip.IsUnspecified())) || portErr != nil || number < 1 || number > 65535 {
 		return "", errors.New("HUKID_LISTEN_ADDR must contain a loopback IP and port 1..65535")
 	}
 	return value, nil
