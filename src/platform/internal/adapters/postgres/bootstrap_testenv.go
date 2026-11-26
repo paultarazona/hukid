@@ -48,6 +48,9 @@ func runtimeTarget(config *pgx.ConnConfig) bool {
 	case "staging":
 		return stagingTarget(config)
 	}
+	if os.Getenv("HUKID_CONTAINER_DEV") == "1" {
+		return stagingTarget(config)
+	}
 	return testTarget(config)
 }
 

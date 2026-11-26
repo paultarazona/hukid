@@ -44,10 +44,14 @@ class WalletApp extends StatelessWidget {
       httpClient: httpClient,
       config: config,
     );
-    final lab = labVerifierFromEnvironment(labEnabled: config.allowInsecureLoopback);
+    final lab = labVerifierFromEnvironment(
+      labEnabled: config.allowInsecureLoopback,
+    );
     final presentationAdapter = Oid4vpPresentationAdapter(
       keyStore: keyStore,
-      httpClient: lab == null ? httpClient : IoOid4vciHttpClient(client: lab.httpClient()),
+      httpClient: lab == null
+          ? httpClient
+          : IoOid4vciHttpClient(client: lab.httpClient()),
       config: config,
       verifierSigningKeys: lab?.signingKeys,
       allowedVerifierOrigins: lab == null ? null : {lab.origin},
@@ -59,7 +63,11 @@ class WalletApp extends StatelessWidget {
       vault: vault,
       enableDeepLinks: true,
       scanner: const AndroidQrScanner(),
-      passIssuer: HukidPassClient(keyStore: keyStore, httpClient: httpClient, config: config),
+      passIssuer: HukidPassClient(
+        keyStore: keyStore,
+        httpClient: httpClient,
+        config: config,
+      ),
     );
   }
 
@@ -292,7 +300,9 @@ class _WalletHomeState extends State<WalletHome> {
                       MaterialPageRoute<void>(
                         builder: (detail) => CredentialDetailPage(
                           credential: cred,
-                          onShowPass: widget.passIssuer != null && supportsCheckinPass(cred)
+                          onShowPass:
+                              widget.passIssuer != null &&
+                                  supportsCheckinPass(cred)
                               ? () => unawaited(
                                   Navigator.of(detail).push<void>(
                                     MaterialPageRoute<void>(
@@ -359,7 +369,9 @@ class _WalletHomeState extends State<WalletHome> {
                   : 'HukID Wallet · OID4VCI + OID4VP + Android Keystore.',
             ),
             if (isLab)
-              const Text('Sin cámara, recepción real ni almacenamiento todavía.'),
+              const Text(
+                'Sin cámara, recepción real ni almacenamiento todavía.',
+              ),
           ],
         ),
       ),
@@ -389,6 +401,7 @@ class _ReceivePageState extends State<ReceivePage> {
   bool consent = false;
   bool scanning = false;
   String? scanNote;
+  Timer? _deferredPollTimer;
 
   Future<void> _scanOffer() async {
     setState(() {
@@ -428,6 +441,7 @@ class _ReceivePageState extends State<ReceivePage> {
 
   @override
   void dispose() {
+    _deferredPollTimer?.cancel();
     flow.cancel();
     input.dispose();
     super.dispose();
@@ -445,14 +459,34 @@ class _ReceivePageState extends State<ReceivePage> {
     final result = flow.receive(consent: consent);
     setState(() {});
     await result;
-    if (mounted) setState(() {});
+    if (mounted) {
+      setState(() {});
+      _scheduleDeferredPoll();
+    }
   }
 
   Future<void> pollDeferred() async {
+    _deferredPollTimer?.cancel();
     final result = flow.pollPending();
     setState(() {});
     await result;
-    if (mounted) setState(() {});
+    if (mounted) {
+      setState(() {});
+      _scheduleDeferredPoll();
+    }
+  }
+
+  void _scheduleDeferredPoll() {
+    _deferredPollTimer?.cancel();
+    final pending = flow.deferred;
+    if (!mounted || flow.state != ReceiptState.pending || pending == null) {
+      return;
+    }
+    final seconds = pending.intervalSeconds.clamp(1, 30);
+    _deferredPollTimer = Timer(
+      Duration(seconds: seconds),
+      () => unawaited(pollDeferred()),
+    );
   }
 
   @override
@@ -541,9 +575,8 @@ class _ReceivePageState extends State<ReceivePage> {
               ),
               if (flow.deferred != null) ...[
                 const SizedBox(height: 8),
-                FilledButton(
-                  onPressed: () => unawaited(pollDeferred()),
-                  child: const Text('Consultar ahora'),
+                const Text(
+                  'HukID está firmando la credencial. La recepción se actualizará automáticamente.',
                 ),
               ],
             ],
@@ -556,9 +589,7 @@ class _ReceivePageState extends State<ReceivePage> {
                   children: [
                     const Text('Credencial guardada'),
                     if (flow.credential != null)
-                      Text(
-                        'Almacenada cifrada (${flow.credential!.title}).',
-                      ),
+                      Text('Almacenada cifrada (${flow.credential!.title}).'),
                   ],
                 ),
               ),
@@ -752,7 +783,9 @@ class _PresentPageState extends State<PresentPage> {
                 onPressed: _busy || _scanning
                     ? null
                     : () => unawaited(_scanRequest()),
-                label: Text(_busy && req == null ? 'Consultando…' : 'Escanear QR'),
+                label: Text(
+                  _busy && req == null ? 'Consultando…' : 'Escanear QR',
+                ),
               ),
             ] else ...[
               Text(
@@ -773,7 +806,9 @@ class _PresentPageState extends State<PresentPage> {
               const SizedBox(height: 16),
               FilledButton(
                 onPressed: _busy ? null : () => unawaited(_fetchRequest()),
-                child: Text(_busy && req == null ? 'Consultando…' : 'Consultar solicitud'),
+                child: Text(
+                  _busy && req == null ? 'Consultando…' : 'Consultar solicitud',
+                ),
               ),
             ],
             if (req != null) ...[

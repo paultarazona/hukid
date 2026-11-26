@@ -42,6 +42,12 @@ func CanonicalEventParticipationDefinition(tenantID, issuerID, issuerURI string)
 			"eventDate":         {Type: "string", Required: true, MaxLength: 32},
 			"participationRole": {Type: "string", Required: true, MaxLength: 64},
 			"certificateNumber": {Type: "string", Required: true, MaxLength: 64},
+			"recipient": {Type: "object", Required: true, Fields: map[string]FieldSpec{
+				"registrationId": {Type: "string", Required: true, MaxLength: 128},
+			}},
+			"event": {Type: "object", Required: true, Fields: map[string]FieldSpec{
+				"id": {Type: "string", Required: true, MaxLength: 128},
+			}},
 		},
 	}
 }

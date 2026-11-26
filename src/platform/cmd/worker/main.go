@@ -16,8 +16,8 @@ import (
 )
 
 func main() {
-	if run() != nil {
-		fmt.Fprintln(os.Stderr, "worker failed")
+	if err := run(); err != nil {
+		fmt.Fprintf(os.Stderr, "worker failed: %v\n", err)
 		os.Exit(1)
 	}
 }
