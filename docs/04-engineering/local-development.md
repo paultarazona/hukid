@@ -271,6 +271,23 @@ Acceso en la raíz: la consola no tiene pantalla de acceso (ADR-0025). Abrir `/`
 
 El [perfil Keycloak implementado](../03-design/console-local-keycloak.md), según [ADR-0026](../decisions/ADR-0026.md), conserva las validaciones operator y configura ES256/at+jwt, clase/grant y MFA por ejecuciones reales. `bootstrap` autentica cada operación administrativa, sin sesión kcadm previa. `start` conecta AUTH, miembros/invitaciones, dashboard y el runtime del Issuer con seis credenciales separadas. Actualizar instalaciones existentes repitiendo `init` y `keycloak-init`, sin borrar `.cache/local`.
 
+### Perfil local en Linux con Docker
+
+Fuera de Windows, `local-env.mjs` y `local-vault.mjs` ejecutan PostgreSQL 18.6, Keycloak 26.8.2 y Vault 1.18.0 con [deploy/local/compose.yaml](../../deploy/local/compose.yaml), publicados sólo en loopback; la API y la consola corren en el host. Requiere Docker con Compose, Node y Go de las versiones fijadas en PATH; no requiere JDK, `psql` ni binarios de PostgreSQL o Vault. Los datos quedan en volúmenes Docker del proyecto `hukid-<nombre del directorio de estado>` y los secretos en el directorio de estado, ignorado por Git. Ambos deben conservarse o eliminarse juntos. Usar el mismo directorio en todos los comandos para que `start` encuentre el token de Vault:
+
+```sh
+export HUKID_LOCAL_STATE_DIR=.cache/local
+node scripts/local-env.mjs init
+node scripts/local-env.mjs keycloak-init
+node scripts/local-vault.mjs start
+node scripts/local-env.mjs start       # queda en primer plano
+node scripts/local-env.mjs bootstrap   # en otra terminal, con las mismas variables
+```
+
+Verificador local ([ADR-0037](../decisions/ADR-0037.md)): con la API activa y un emisor creado, `node scripts/local-env.mjs verifier-init <slug>` y después `stop` y `start`. Añade un HTTPS de laboratorio en `127.0.0.1:8443` (requiere `openssl`; certificado de 30 días) que sólo reenvía `/oid4vp/*`. Repetir `verifier-init` si el emisor rota su clave. La wallet debe compilarse con la clave pública y la CA de `<estado>/verifier/`.
+
+Para detener: `node scripts/local-env.mjs stop` y `node scripts/local-vault.mjs stop`. Tras reiniciar, ejecutar `local-vault.mjs start` para desellar Vault. La ruta Linux no se ha probado en Windows ni sustituye los gates.
+
 ### Perfil local del Issuer
 
 El perfil local puede usar Vault Transit nativo (sin Docker ni WSL) y un directorio aislado, para conservar un `.cache/local` previo con otro historial de migraciones. Vault 1.18.0 se descarga desde [HashiCorp Releases](https://releases.hashicorp.com/vault/1.18.0/) y se verifica con el SHA-256 oficial antes de extraerlo en `.cache/toolchains/vault-1.18.0/`. El estado cifrado de Vault, su clave de desellado, los tokens locales y las credenciales del perfil quedan únicamente en `.cache/local-issuer/`, ignorado por Git.

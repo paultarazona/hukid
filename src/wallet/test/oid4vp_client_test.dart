@@ -263,6 +263,26 @@ void main() {
     await expectLater(adapter.fetchRequest(server.launchUri()), throwsFormatException);
   });
 
+  test('fetchRequest refuses requests without a trusted verifier key', () async {
+    final server = await _MockHukidVerifier.start();
+    addTearDown(server.close);
+    Oid4vpPresentationAdapter adapter(Map<String, PublicEcJwk>? keys) => Oid4vpPresentationAdapter(
+      keyStore: MemoryHolderKeyStore(),
+      config: const Oid4vciConfig(allowInsecureLoopback: true),
+      verifierSigningKeys: keys,
+    );
+    final other = P256KeyPair.generate(kid: 'ver-sig-1').publicJwk;
+    for (final keys in <Map<String, PublicEcJwk>?>[
+      null,
+      <String, PublicEcJwk>{},
+      <String, PublicEcJwk>{'otra-kid': server.signingKey.publicJwk},
+      <String, PublicEcJwk>{'ver-sig-1': other},
+    ]) {
+      await expectLater(adapter(keys).fetchRequest(server.launchUri()), throwsFormatException);
+    }
+    expect(server.lastResponseJwe, isNull);
+  });
+
   test('presentCredential reports rejected on 400 and on mismatched holder key', () async {
     final server = await _MockHukidVerifier.start();
     addTearDown(server.close);
@@ -270,6 +290,9 @@ void main() {
     final adapter = Oid4vpPresentationAdapter(
       keyStore: setup.keyStore,
       config: const Oid4vciConfig(allowInsecureLoopback: true),
+      verifierSigningKeys: <String, PublicEcJwk>{
+        'ver-sig-1': server.signingKey.publicJwk,
+      },
     );
 
     final req = await adapter.fetchRequest(server.launchUri('st_reject'));
@@ -284,6 +307,9 @@ void main() {
     final mismatchAdapter = Oid4vpPresentationAdapter(
       keyStore: otherStore,
       config: const Oid4vciConfig(allowInsecureLoopback: true),
+      verifierSigningKeys: <String, PublicEcJwk>{
+        'ver-sig-1': server.signingKey.publicJwk,
+      },
     );
     final mismatchOutcome = await mismatchAdapter.presentCredential(
       request: req,

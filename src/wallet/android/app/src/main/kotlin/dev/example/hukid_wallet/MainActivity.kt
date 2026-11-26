@@ -3,6 +3,9 @@ package dev.example.hukid_wallet
 import android.content.Intent
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
+import com.google.mlkit.vision.barcode.common.Barcode
+import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
+import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -26,6 +29,7 @@ class MainActivity : FlutterActivity() {
         private const val KEYSTORE_CHANNEL = "dev.example.hukid_wallet/keystore"
         private const val VAULT_CHANNEL = "dev.example.hukid_wallet/vault"
         private const val DEEPLINK_CHANNEL = "dev.example.hukid_wallet/deeplink"
+        private const val SCANNER_CHANNEL = "dev.example.hukid_wallet/scanner"
         private const val VAULT_KEY_ALIAS = "hukid_wallet_vault_aes256"
         private const val GCM_TAG_BITS = 128
         private val RECORD_ID_RE = Regex("^[A-Za-z0-9_-]{1,128}$")
@@ -91,6 +95,14 @@ class MainActivity : FlutterActivity() {
                 }
             }
 
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SCANNER_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "scanQr" -> scanQr(result)
+                    else -> result.notImplemented()
+                }
+            }
+
         deepLinkChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, DEEPLINK_CHANNEL)
         deepLinkChannel?.setMethodCallHandler { call, result ->
             when (call.method) {
@@ -102,6 +114,18 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+    }
+
+    // The scanned text may carry a bearer code: it is handed to Dart and never logged.
+    private fun scanQr(result: MethodChannel.Result) {
+        val options = GmsBarcodeScannerOptions.Builder()
+            .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
+            .enableAutoZoom()
+            .build()
+        GmsBarcodeScanning.getClient(this, options).startScan()
+            .addOnSuccessListener { barcode -> result.success(barcode.rawValue) }
+            .addOnCanceledListener { result.success(null) }
+            .addOnFailureListener { result.error("SCANNER_ERROR", "scanner unavailable", null) }
     }
 
     override fun onNewIntent(intent: Intent) {

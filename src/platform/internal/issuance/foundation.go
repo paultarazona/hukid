@@ -49,6 +49,8 @@ const (
 	ScopeIssuanceRead = "issuance:read"
 	// ScopeStatusWrite allows suspending, reactivating and revoking issued credentials.
 	ScopeStatusWrite = "status:write"
+	// ScopePassVerify allows a door system to redeem check-in passes (ADR-0038).
+	ScopePassVerify = "pass:verify"
 
 	// IntegrationTokenClass and IntegrationAudience bind M2M tokens (profile §6).
 	IntegrationTokenClass      = "integration"
@@ -493,7 +495,7 @@ func NewClientRegistry(audit *AuditLog) *ClientRegistry {
 }
 
 func allowedIntegrationScope(s string) bool {
-	return s == ScopeIssuanceCreate || s == ScopeIssuanceRead || s == ScopeStatusWrite
+	return s == ScopeIssuanceCreate || s == ScopeIssuanceRead || s == ScopeStatusWrite || s == ScopePassVerify
 }
 
 // AllowedIntegrationScope reports whether s is a permitted M2M scope in v0.

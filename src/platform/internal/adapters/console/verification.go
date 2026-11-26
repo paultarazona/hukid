@@ -9,11 +9,12 @@ import (
 	"hukid.local/platform/internal/authentication"
 )
 
-// VerificationHandler is the browser mount of the read-only verification
-// views (VER-T11-e). It authenticates the console session cookie and delegates
-// to the same reader as the Bearer API, which re-checks the live membership and
-// the verification:read capability. It never starts a session: starting stays
-// an operator action with fresh MFA.
+// VerificationHandler is the browser mount of the verification module. It
+// authenticates the console session cookie and delegates to the same handlers
+// as the Bearer API. Reads re-check the live membership and verification:read
+// (VER-T11-e). Starting a session (ADR-0037) additionally requires the exact
+// console Origin and the CSRF proof; the start handler then re-checks fresh
+// MFA, the membership and verification:start.
 type VerificationHandler struct {
 	Auth       *MeHandler
 	Management *privateapi.VerificationHandler
@@ -25,7 +26,12 @@ func (h *VerificationHandler) Register(mux *http.ServeMux) {
 }
 
 func (h *VerificationHandler) serve(w http.ResponseWriter, r *http.Request, kind string) {
-	if !privateapi.PrepareMethod(w, r, http.MethodGet) {
+	start := kind == "list" && r.Method == http.MethodPost
+	method := http.MethodGet
+	if start {
+		method = http.MethodPost
+	}
+	if !privateapi.PrepareMethod(w, r, method) {
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
@@ -47,7 +53,22 @@ func (h *VerificationHandler) serve(w http.ResponseWriter, r *http.Request, kind
 		fail(authentication.ErrSession)
 		return
 	}
-	session, err := h.Auth.Sessions.Read(ctx, cookie)
+	var session authentication.SessionView
+	var err error
+	if start {
+		origins, proofs := r.Header.Values("Origin"), r.Header.Values("X-CSRF-Token")
+		if len(origins) != 1 || origins[0] != h.Auth.Sessions.Policy.ConsoleOrigin {
+			fail(authentication.ErrOrigin)
+			return
+		}
+		if len(proofs) != 1 {
+			fail(authentication.ErrCSRF)
+			return
+		}
+		session, err = h.Auth.Sessions.CheckCommand(ctx, cookie, proofs[0])
+	} else {
+		session, err = h.Auth.Sessions.Read(ctx, cookie)
+	}
 	if err != nil {
 		fail(err)
 		return
@@ -73,6 +94,15 @@ func (h *VerificationHandler) serve(w http.ResponseWriter, r *http.Request, kind
 	}
 	if err = h.Auth.Sessions.Touch(ctx, cookie); err != nil {
 		fail(err)
+		return
+	}
+	if start {
+		command := r.Clone(ctx)
+		command.Header.Del("Cookie")
+		command.Header.Del("Origin")
+		command.Header.Del("X-CSRF-Token")
+		command.Header.Set("Authorization", "Bearer "+session.AccessToken)
+		h.Management.ServeStart(w, command)
 		return
 	}
 	h.Management.ServeRead(w, r.WithContext(ctx), identity.ActorID, kind, false)

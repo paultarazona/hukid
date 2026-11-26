@@ -313,7 +313,7 @@ export function IssuanceManagement({ identity, kind }: { identity: Identity; kin
             ? [...allowedIssuers, item.issuerId] : allowedIssuers.filter(id => id !== item.issuerId))} />{item.displayName} · {item.slug}</label>)}
           {!issuers.length && <p>No hay emisores disponibles para asignar.</p>}</fieldset>
         <fieldset><legend>Permisos de integración</legend>{([
-          ['issuance:create', 'Crear solicitudes de emisión'], ['issuance:read', 'Consultar solicitudes propias'], ['status:write', 'Cambiar el estado de credenciales'],
+          ['issuance:create', 'Crear solicitudes de emisión'], ['issuance:read', 'Consultar solicitudes propias'], ['status:write', 'Cambiar el estado de credenciales'], ['pass:verify', 'Verificar pases de ingreso'],
         ] as const).map(([scope, label]) => <label className="issuance-check" key={scope}><input type="checkbox" checked={scopes.includes(scope)} onChange={event => setScopes(event.target.checked
           ? [...scopes, scope] : scopes.filter(value => value !== scope))} />{label}</label>)}</fieldset>
         <button className="issuance-primary" disabled={busy || !allowedIssuers.length}>Registrar cliente</button>

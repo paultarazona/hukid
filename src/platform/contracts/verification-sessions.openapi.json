@@ -198,6 +198,86 @@
       }
     },
     "/console/api/tenants/{tenantId}/verification-sessions": {
+      "post": {
+        "operationId": "consoleStartVerificationSession",
+        "summary": "Start a verification session from the console (ADR-0037, proposed): active tenant, exact console Origin, CSRF proof, verification:start and fresh MFA",
+        "security": [
+          {
+            "consoleSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TenantId"
+          },
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 2048
+            },
+            "description": "Must equal the configured console origin."
+          },
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "ttlSeconds": {
+                    "type": "integer",
+                    "minimum": 60,
+                    "maximum": 900,
+                    "description": "Proposed default 300; the module cap is 15 minutes."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Session created. The launch URI is the only handle; nonce, state and keys are never returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerificationSessionCreated"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
       "get": {
         "operationId": "consoleListVerificationSessions",
         "summary": "List the tenant's verification sessions, newest first (capability verification:read, no step-up) — browser mount: requires the explicitly selected active tenant, otherwise 404",

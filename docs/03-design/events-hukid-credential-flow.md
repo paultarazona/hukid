@@ -6,6 +6,8 @@ Para el resumen en una página de qué hace cada actor y cuáles son los dos mom
 
 Leyenda de color: azul, Events; violeta, HukID; gris, actor externo.
 
+> Desde el 2026-11-26 existe además, en laboratorio, un [pase de ingreso](checkin-pass.md) que muestra la wallet ([ADR-0038](../decisions/ADR-0038.md)). No está reflejado en los diagramas siguientes.
+
 ## 1. Tres QR distintos
 
 Cada QR nace en un sistema, usa otro protocolo y cumple otro propósito. Solo el segundo y el tercero pertenecen a HukID. La documentación no relaciona el ticket de Events con los otros dos.

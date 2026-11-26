@@ -112,6 +112,11 @@ func readTTL(r *http.Request) (time.Duration, error) {
 	return ttl, nil
 }
 
+// ServeStart is the start operation for the console mount, which has already
+// checked the browser session, Origin and CSRF. It applies the same bearer,
+// fresh-MFA, membership and capability checks as the operator API.
+func (h *VerificationHandler) ServeStart(w http.ResponseWriter, r *http.Request) { h.start(w, r) }
+
 func (h *VerificationHandler) start(w http.ResponseWriter, r *http.Request) {
 	if !PrepareMethod(w, r, http.MethodPost) {
 		return

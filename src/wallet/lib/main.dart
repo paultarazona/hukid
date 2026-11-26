@@ -3,10 +3,14 @@ import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
+import 'checkin_pass.dart';
+import 'credential_card.dart';
 import 'issuance.dart';
 import 'keystore.dart';
+import 'lab_verifier.dart';
 import 'oid4vci_client.dart';
 import 'oid4vp_client.dart';
+import 'qr_scanner.dart';
 
 const bool _allowInsecureLoopback = bool.fromEnvironment(
   'HUKID_ALLOW_INSECURE_LOOPBACK',
@@ -21,6 +25,8 @@ class WalletApp extends StatelessWidget {
     this.presentationAdapter = const UnavailableVerifier(),
     this.vault,
     this.enableDeepLinks = false,
+    this.scanner,
+    this.passIssuer,
   });
 
   factory WalletApp.live({
@@ -38,10 +44,13 @@ class WalletApp extends StatelessWidget {
       httpClient: httpClient,
       config: config,
     );
+    final lab = labVerifierFromEnvironment(labEnabled: config.allowInsecureLoopback);
     final presentationAdapter = Oid4vpPresentationAdapter(
       keyStore: keyStore,
-      httpClient: httpClient,
+      httpClient: lab == null ? httpClient : IoOid4vciHttpClient(client: lab.httpClient()),
       config: config,
+      verifierSigningKeys: lab?.signingKeys,
+      allowedVerifierOrigins: lab == null ? null : {lab.origin},
     );
     return WalletApp(
       key: key,
@@ -49,6 +58,8 @@ class WalletApp extends StatelessWidget {
       presentationAdapter: presentationAdapter,
       vault: vault,
       enableDeepLinks: true,
+      scanner: const AndroidQrScanner(),
+      passIssuer: HukidPassClient(keyStore: keyStore, httpClient: httpClient, config: config),
     );
   }
 
@@ -56,6 +67,11 @@ class WalletApp extends StatelessWidget {
   final PresentationAdapter presentationAdapter;
   final CredentialVault? vault;
   final bool enableDeepLinks;
+
+  /// Con escáner, las pantallas sólo leen QR. Sin él (laboratorio y pruebas)
+  /// conservan el campo de enlace.
+  final QrScanner? scanner;
+  final PassIssuer? passIssuer;
 
   @override
   Widget build(BuildContext context) => MaterialApp(
@@ -81,6 +97,8 @@ class WalletApp extends StatelessWidget {
       presentationAdapter: presentationAdapter,
       vault: vault,
       enableDeepLinks: enableDeepLinks,
+      scanner: scanner,
+      passIssuer: passIssuer,
     ),
   );
 }
@@ -92,12 +110,16 @@ class WalletHome extends StatefulWidget {
     this.presentationAdapter = const UnavailableVerifier(),
     this.vault,
     this.enableDeepLinks = false,
+    this.scanner,
+    this.passIssuer,
   });
 
   final OfferAdapter adapter;
   final PresentationAdapter presentationAdapter;
   final CredentialVault? vault;
   final bool enableDeepLinks;
+  final QrScanner? scanner;
+  final PassIssuer? passIssuer;
 
   @override
   State<WalletHome> createState() => _WalletHomeState();
@@ -186,8 +208,11 @@ class _WalletHomeState extends State<WalletHome> {
   Future<void> _openReceivePage({String? initialLink}) async {
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
-        builder: (_) =>
-            ReceivePage(adapter: widget.adapter, initialLink: initialLink),
+        builder: (_) => ReceivePage(
+          adapter: widget.adapter,
+          initialLink: initialLink,
+          scanner: widget.scanner,
+        ),
       ),
     );
     await _reloadVault();
@@ -202,6 +227,7 @@ class _WalletHomeState extends State<WalletHome> {
           adapter: widget.presentationAdapter,
           credentials: _credentials,
           initialLink: initialLink,
+          scanner: widget.scanner,
         ),
       ),
     );
@@ -259,24 +285,27 @@ class _WalletHomeState extends State<WalletHome> {
               )
             else
               ..._credentials.map(
-                (cred) => Card(
-                  color: const Color(0xfff3effb),
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          cred.title,
-                          style: Theme.of(context).textTheme.titleMedium,
+                (cred) => CredentialCard(
+                  credential: cred,
+                  onTap: () => unawaited(
+                    Navigator.of(context).push<void>(
+                      MaterialPageRoute<void>(
+                        builder: (detail) => CredentialDetailPage(
+                          credential: cred,
+                          onShowPass: widget.passIssuer != null && supportsCheckinPass(cred)
+                              ? () => unawaited(
+                                  Navigator.of(detail).push<void>(
+                                    MaterialPageRoute<void>(
+                                      builder: (_) => PassPage(
+                                        issuer: widget.passIssuer!,
+                                        credential: cred,
+                                      ),
+                                    ),
+                                  ),
+                                )
+                              : null,
                         ),
-                        const SizedBox(height: 4),
-                        Text('Emisor: ${cred.issuerDisplayName}'),
-                        Text(
-                          'Llave vinculada: ${cred.holderJkt.substring(0, cred.holderJkt.length < 12 ? cred.holderJkt.length : 12)}…',
-                        ),
-                        Text('Recibida: ${cred.receivedAtIso.split('T').first}'),
-                      ],
+                      ),
                     ),
                   ),
                 ),
@@ -339,10 +368,16 @@ class _WalletHomeState extends State<WalletHome> {
 }
 
 class ReceivePage extends StatefulWidget {
-  const ReceivePage({super.key, required this.adapter, this.initialLink});
+  const ReceivePage({
+    super.key,
+    required this.adapter,
+    this.initialLink,
+    this.scanner,
+  });
 
   final OfferAdapter adapter;
   final String? initialLink;
+  final QrScanner? scanner;
 
   @override
   State<ReceivePage> createState() => _ReceivePageState();
@@ -352,6 +387,34 @@ class _ReceivePageState extends State<ReceivePage> {
   late final flow = Issuance(widget.adapter);
   final input = TextEditingController();
   bool consent = false;
+  bool scanning = false;
+  String? scanNote;
+
+  Future<void> _scanOffer() async {
+    setState(() {
+      scanning = true;
+      scanNote = null;
+    });
+    String? text;
+    try {
+      text = (await widget.scanner!.scan())?.trim();
+    } catch (_) {
+      scanNote = qrScannerFailureMessage;
+    }
+    if (!mounted) return;
+    setState(() => scanning = false);
+    if (text == null) return;
+    if (!text.startsWith('openid-credential-offer://')) {
+      setState(() {
+        scanNote = text!.startsWith(oid4vpScheme)
+            ? 'Ese QR es para presentar una credencial. Usa «Presentar credencial».'
+            : 'Ese QR no es una oferta de credencial.';
+      });
+      return;
+    }
+    input.text = text;
+    await _inspectOffer();
+  }
 
   @override
   void initState() {
@@ -404,7 +467,23 @@ class _ReceivePageState extends State<ReceivePage> {
         child: ListView(
           padding: const EdgeInsets.all(24),
           children: [
-            if (offer == null) ...[
+            if (offer == null && widget.scanner != null) ...[
+              const Text(
+                'Escanea el código QR que te muestra tu organización para recibir tu credencial.',
+              ),
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                icon: const Icon(Icons.qr_code_scanner),
+                onPressed: loading || scanning
+                    ? null
+                    : () => unawaited(_scanOffer()),
+                label: Text(loading ? 'Consultando…' : 'Escanear QR'),
+              ),
+              if (scanNote != null) ...[
+                const SizedBox(height: 12),
+                Semantics(liveRegion: true, child: Text(scanNote!)),
+              ],
+            ] else if (offer == null) ...[
               const Text('Usar enlace'),
               Text(
                 widget.adapter is UnavailableIssuer
@@ -524,11 +603,13 @@ class PresentPage extends StatefulWidget {
     required this.adapter,
     required this.credentials,
     this.initialLink,
+    this.scanner,
   });
 
   final PresentationAdapter adapter;
   final List<StoredCredential> credentials;
   final String? initialLink;
+  final QrScanner? scanner;
 
   @override
   State<PresentPage> createState() => _PresentPageState();
@@ -541,6 +622,37 @@ class _PresentPageState extends State<PresentPage> {
   bool _busy = false;
   bool _submitted = false;
   String? _statusNote;
+  bool _scanning = false;
+
+  Future<void> _scanRequest() async {
+    setState(() {
+      _scanning = true;
+      _statusNote = null;
+    });
+    String? text;
+    String? failure;
+    try {
+      text = (await widget.scanner!.scan())?.trim();
+    } catch (_) {
+      failure = qrScannerFailureMessage;
+    }
+    if (!mounted) return;
+    setState(() {
+      _scanning = false;
+      _statusNote = failure;
+    });
+    if (text == null) return;
+    if (!text.startsWith(oid4vpScheme)) {
+      setState(() {
+        _statusNote = text!.startsWith('openid-credential-offer://')
+            ? 'Ese QR es para recibir una credencial. Usa «Recibir credencial».'
+            : 'Ese QR no es una solicitud de verificación.';
+      });
+      return;
+    }
+    _input.text = text;
+    await _fetchRequest();
+  }
 
   @override
   void initState() {
@@ -630,26 +742,40 @@ class _PresentPageState extends State<PresentPage> {
         child: ListView(
           padding: const EdgeInsets.all(24),
           children: [
-            Text(
-              widget.adapter is UnavailableVerifier
-                  ? 'Sin validador configurado. No se enviarán datos reales.'
-                  : 'Pega el enlace openid4vp:// emitido por el validador.',
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: _input,
-              autocorrect: false,
-              enableSuggestions: false,
-              decoration: const InputDecoration(
-                labelText: 'Enlace de verificación',
-                border: OutlineInputBorder(),
+            if (widget.scanner != null) ...[
+              const Text(
+                'Escanea el código QR del validador. Verás la solicitud antes de enviar nada.',
               ),
-            ),
-            const SizedBox(height: 16),
-            FilledButton(
-              onPressed: _busy ? null : () => unawaited(_fetchRequest()),
-              child: Text(_busy && req == null ? 'Consultando…' : 'Consultar solicitud'),
-            ),
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                icon: const Icon(Icons.qr_code_scanner),
+                onPressed: _busy || _scanning
+                    ? null
+                    : () => unawaited(_scanRequest()),
+                label: Text(_busy && req == null ? 'Consultando…' : 'Escanear QR'),
+              ),
+            ] else ...[
+              Text(
+                widget.adapter is UnavailableVerifier
+                    ? 'Sin validador configurado. No se enviarán datos reales.'
+                    : 'Pega el enlace openid4vp:// emitido por el validador.',
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: _input,
+                autocorrect: false,
+                enableSuggestions: false,
+                decoration: const InputDecoration(
+                  labelText: 'Enlace de verificación',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 16),
+              FilledButton(
+                onPressed: _busy ? null : () => unawaited(_fetchRequest()),
+                child: Text(_busy && req == null ? 'Consultando…' : 'Consultar solicitud'),
+              ),
+            ],
             if (req != null) ...[
               const SizedBox(height: 20),
               Card(
@@ -681,20 +807,12 @@ class _PresentPageState extends State<PresentPage> {
                 ),
                 const SizedBox(height: 8),
                 ...widget.credentials.map(
-                  (cred) => Card(
-                    child: ListTile(
-                      leading: Icon(
-                        cred.id == _selectedCredentialId
-                            ? Icons.radio_button_checked
-                            : Icons.radio_button_unchecked,
-                      ),
-                      title: Text(cred.title),
-                      subtitle: Text(cred.issuerDisplayName),
-                      selected: cred.id == _selectedCredentialId,
-                      onTap: _busy
-                          ? null
-                          : () => setState(() => _selectedCredentialId = cred.id),
-                    ),
+                  (cred) => CredentialCard(
+                    credential: cred,
+                    selected: cred.id == _selectedCredentialId,
+                    onTap: _busy
+                        ? null
+                        : () => setState(() => _selectedCredentialId = cred.id),
                   ),
                 ),
                 const SizedBox(height: 12),

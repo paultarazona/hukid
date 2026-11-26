@@ -266,7 +266,7 @@ export function AuthConsole() {
           identity={identity} view={current.id} onAccessError={accessError} />}
         {(current.id === 'miembros' || current.id === 'invitaciones') && <MemberManagement key={`${key}:${current.id}`}
           identity={identity} kind={current.id === 'miembros' ? 'memberships' : 'invitations'} onChanged={() => void updateContext()} />}
-        {current.id === 'verificaciones' && <Verifications key={`${key}:${identity.context!.capabilities.join(',')}`} identity={identity} onAccessError={accessError} />}
+        {current.id === 'verificaciones' && <Verifications key={`${key}:${identity.context!.capabilities.join(',')}`} identity={identity} onAccessError={accessError} onStepUp={() => void run('step-up')} />}
         {(current.id === 'emisores' || current.id === 'definiciones' || current.id === 'clientes' || current.id === 'solicitudes' || current.id === 'credenciales') &&
           <IssuanceManagement key={`${key}:${current.id}`} identity={identity} kind={current.id} />}
         {current.id === 'ajustes' &&

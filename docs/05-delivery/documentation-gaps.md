@@ -255,3 +255,19 @@ Arranque/parada, persistencia y bootstrap repetido se comprobaron; bootstrap fal
 ### Corrección posterior del perfil local
 
 El [perfil Keycloak implementado](../03-design/console-local-keycloak.md) y [ADR-0026](../decisions/ADR-0026.md) corrigen provisioning, autenticación administrativa y configuración de los módulos locales. El estado de validación final se mantiene en [tareas AUTH/LOC](../features/FEAT-001-authentication/tasks.md); el párrafo y el informe anteriores describen el diagnóstico previo, no sustituyen esa evidencia posterior. Enrolamiento TOTP sin ejecución OTP sigue denegado por diseño y requiere completar un login posterior. Correo real, matriz completa de caídas, rotación/restore, CI remoto y producción siguen fuera de la evidencia local.
+
+## Integración local con el sistema de eventos y pase de ingreso — 2026-11-26
+
+Incremento de laboratorio: perfil local en Linux con Docker, [inicio de verificación desde la consola](../decisions/ADR-0037.md) y [pase de ingreso](../decisions/ADR-0038.md) ([contrato](../03-design/checkin-pass.md)). Ambas decisiones siguen **propuestas**.
+
+Comprobado: recepción de una credencial en un teléfono Android conectado por USB y canje de un pase leído de su pantalla, con un cliente de prueba en el papel de la puerta (otro evento rechazado, aceptado una vez, reutilización rechazada).
+
+Pendiente o sin acreditar:
+
+- Presentación OpenID4VP de extremo a extremo con el verificador local y la pantalla «Nueva verificación»: sin probar en teléfono ni navegador.
+- Lectura del pase con la cámara del sistema de puerta y registro de la entrada en él; ese código vive en su propio repositorio.
+- La credencial de ingreso debe emitirse antes del evento; las pruebas usaron una de asistencia como excepción de desarrollo.
+- La confianza de la wallet en el verificador sólo existe para laboratorio (clave y CA fijadas al compilar): una wallet distribuida rechaza toda solicitud OpenID4VP.
+- Los pases viven en memoria (una sola réplica) y los endpoints públicos del pase no tienen limitación de frecuencia.
+- La consulta PostgreSQL por huella del JWT no tiene prueba de integración propia; sólo se ejercitó en la prueba manual con teléfono.
+- Las pruebas de navegador y los gates AUTH/USR/DASH no se ejecutaron. Los cambios de `local-env.mjs` y `local-vault.mjs` no se probaron en Windows, y no se repitió un ciclo detener/arrancar tras corregir el cierre del proxy HTTPS.

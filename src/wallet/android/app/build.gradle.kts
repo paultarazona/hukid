@@ -47,3 +47,8 @@ kotlin {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    // QR scanner UI provided by Google Play services; needs no CAMERA permission.
+    implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
+}

@@ -1038,6 +1038,19 @@ func (t *postgresIssuanceTx) SaveIssuedCredential(rec issuance.IssuedCredentialR
 	return err
 }
 
+func (t *postgresIssuanceTx) FindIssuedCredentialByDigest(digest string) (issuance.IssuedCredentialRecord, bool, error) {
+	var credentialID string
+	err := t.tx.QueryRow(t.ctx,
+		`SELECT credential_id FROM status.issued_credentials WHERE jws_digest=$1`, digest).Scan(&credentialID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return issuance.IssuedCredentialRecord{}, false, nil
+	}
+	if err != nil {
+		return issuance.IssuedCredentialRecord{}, false, err
+	}
+	return t.LockIssuedCredential(credentialID)
+}
+
 func (t *postgresIssuanceTx) LockIssuedCredential(credentialID string) (issuance.IssuedCredentialRecord, bool, error) {
 	if credentialID == "" {
 		return issuance.IssuedCredentialRecord{}, false, nil
