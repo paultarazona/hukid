@@ -36,6 +36,7 @@ const (
 	vciLabCreateKey    = "HUKID_OID4VCI_LAB_CREATE_KEY"
 	vciLabClaimsKey    = "HUKID_OID4VCI_LAB_CLAIMS_KEY"
 	vciLabAuthServer   = "HUKID_OID4VCI_LAB_AUTH_SERVER"
+	vciLabIssuerURI    = "HUKID_OID4VCI_LAB_ISSUER_URI"
 	vciLabClientID     = "HUKID_OID4VCI_LAB_CLIENT_ID"
 	vciLabClientSecret = "HUKID_OID4VCI_LAB_CLIENT_SECRET"
 	vciLabDatabaseURL  = "HUKID_OID4VCI_LAB_DATABASE_URL"
@@ -57,6 +58,7 @@ func anyVCILabEnvSet() bool {
 		vciLabFlag, vciLabSlug, vciLabDisplayName, vciLabKID,
 		vciLabSigningKey, vciLabCreateKey, vciLabClaimsKey,
 		vciLabAuthServer, vciLabClientID, vciLabClientSecret, vciLabDatabaseURL,
+		vciLabIssuerURI,
 	} {
 		if os.Getenv(key) != "" {
 			return true
@@ -205,7 +207,10 @@ func configureOID4VCILab(ctx context.Context, address string, out io.Writer, now
 	}
 	defer clear(claimsKey)
 
-	issuerURI := issuance.IssuerPrefix + slug
+	issuerURI := defaultString(os.Getenv(vciLabIssuerURI), issuance.IssuerPrefix+slug)
+	if parsed, err := url.Parse(issuerURI); err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.Path == "" {
+		return nil, nil, errVCILabConfig
+	}
 	pubJWK, err := issuance.ExportPublicJWK(&privKey.PublicKey, kid)
 	if err != nil {
 		return nil, nil, errVCILabConfig
@@ -291,25 +296,13 @@ func configureOID4VCILab(ctx context.Context, address string, out io.Writer, now
 		if err := ring.RegisterKey(kid, privKey, "vci-lab-seed", "cor-seed-k1", seedTime); err != nil {
 			return nil, nil, errVCILabConfig
 		}
-		certDef := issuance.Definition{
-			TenantID:        vciLabDefaultTenantID,
-			IssuerID:        vciLabDefaultIssuerID,
-			ID:              "unas-certificate",
-			Version:         "1.0.0",
-			ConfigurationID: issuance.CertificateConfigID,
-			DisplayName:     "Certificado de Asistencia UNAS",
-			Locale:          "es-PE",
-			Contexts:        []string{issuance.CertificateContext},
-			Types:           []string{issuance.CertificateType},
-			DefaultValidity: 365 * 24 * time.Hour,
-			StatusPurposes:  []string{issuance.PurposeRevocation, issuance.PurposeSuspension},
-			PublishSchema:   true,
-			Fields: map[string]issuance.FieldSpec{
-				"participantName": {Type: "string", Required: true, MaxLength: 120},
-				"eventName":       {Type: "string", Required: true, MaxLength: 160},
-				"role":            {Type: "string", Required: false, MaxLength: 60},
-			},
-		}
+		// El laboratorio usa la definición canónica del producto, para que las
+		// pruebas locales validen exactamente el mismo contrato que HukID.
+		certDef := issuance.CanonicalEventParticipationDefinition(
+			vciLabDefaultTenantID,
+			vciLabDefaultIssuerID,
+			issuerURI,
+		)
 		if err := defs.CreateDraft(certDef, "vci-lab-seed", "cor-seed-d1", seedTime); err != nil {
 			return nil, nil, errVCILabConfig
 		}
