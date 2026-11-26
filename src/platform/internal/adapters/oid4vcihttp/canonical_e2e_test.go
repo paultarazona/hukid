@@ -197,6 +197,8 @@ func TestCanonicalEventParticipationEndToEndFlow(t *testing.T) {
 		"issuerId": "iss_unas",
 		"credentialDefinition": "event-participation-certificate@1.0.0",
 		"claims": {
+			"recipient": {"registrationId": "reg-canon-0001"},
+			"event": {"id": "event-canon-0001"},
 			"participantName": "Ana María Quispe",
 			"eventTitle": "Congreso Cloud UNAS",
 			"organizerName": "IncubaUNAS",
@@ -214,6 +216,8 @@ func TestCanonicalEventParticipationEndToEndFlow(t *testing.T) {
 		"issuerId": "iss_unas",
 		"credentialDefinition": "event-participation-certificate@1.0.0",
 		"claims": {
+			"recipient": {"registrationId": "reg-canon-0001"},
+			"event": {"id": "event-canon-0001"},
 			"participantName": "Ana María Quispe",
 			"eventTitle": "Congreso Cloud UNAS",
 			"organizerName": "IncubaUNAS",
@@ -231,6 +235,8 @@ func TestCanonicalEventParticipationEndToEndFlow(t *testing.T) {
 		"issuerId": "iss_unas",
 		"credentialDefinition": "event-participation-certificate@1.0.0",
 		"claims": {
+			"recipient": {"registrationId": "reg-canon-0001"},
+			"event": {"id": "event-canon-0001"},
 			"participantName": "Ana María Quispe",
 			"eventTitle": "Congreso Cloud UNAS",
 			"organizerName": "IncubaUNAS",
@@ -249,6 +255,8 @@ func TestCanonicalEventParticipationEndToEndFlow(t *testing.T) {
 		"issuerId": "iss_unas",
 		"credentialDefinition": "event-participation-certificate@1.0.0",
 		"claims": {
+			"recipient": {"registrationId": "reg-canon-0001"},
+			"event": {"id": "event-canon-0001"},
 			"participantName": "Ana María Quispe",
 			"eventTitle": "Congreso Cloud UNAS",
 			"organizerName": "IncubaUNAS",
@@ -350,6 +358,8 @@ func TestCanonicalEventParticipationEndToEndFlow(t *testing.T) {
 		"issuerId": "iss_unas",
 		"credentialDefinition": "event-participation-certificate@1.0.0",
 		"claims": {
+			"recipient": {"registrationId": "reg-canon-0002"},
+			"event": {"id": "event-canon-0001"},
 			"participantName": "Carlos Mendoza",
 			"eventTitle": "Congreso Cloud UNAS",
 			"organizerName": "IncubaUNAS",

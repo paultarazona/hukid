@@ -218,6 +218,8 @@ func TestVCILabPersistentKeyAndDualMountE2E(t *testing.T) {
 		IssuerID:             issuerID,
 		CredentialDefinition: issuance.CanonicalEventParticipationRef(),
 		Claims: map[string]any{
+			"recipient":         map[string]any{"registrationId": "reg-lab-0001"},
+			"event":             map[string]any{"id": "event-lab-0001"},
 			"participantName":   "Carlos Mendoza",
 			"eventTitle":        "Jornada Cloud UNAS",
 			"organizerName":     "IncubaUNAS",

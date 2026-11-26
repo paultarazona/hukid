@@ -276,7 +276,7 @@ func configureOID4VCILab(ctx context.Context, address string, out io.Writer, now
 		if clientSecret == "" {
 			return nil, nil, errVCILabConfig
 		}
-		_ = backend.RegisterClient(ctx, vciLabDefaultTenantID, clientID, "Lab Events Client", clientSecret, []string{vciLabDefaultIssuerID}, []string{issuance.ScopeIssuanceCreate, issuance.ScopeIssuanceRead, issuance.ScopeStatusWrite}, nil, "vci-lab-seed", "cor-seed-c1", seedTime)
+		_ = backend.RegisterClient(ctx, vciLabDefaultTenantID, clientID, "Lab Events Client", clientSecret, []string{vciLabDefaultIssuerID}, []string{issuance.ScopeIssuanceCreate, issuance.ScopeIssuanceRead, issuance.ScopeStatusWrite, issuance.ScopePassVerify}, nil, "vci-lab-seed", "cor-seed-c1", seedTime)
 		_ = issuerRec
 		signers := func(_, _, resolvedIssuerURI, resolvedKID, _ string, expectedPub *ecdsa.PublicKey) (issuance.Signer, error) {
 			if resolvedIssuerURI != issuerURI || resolvedKID != kid || expectedPub == nil || !expectedPub.Equal(&privKey.PublicKey) {
