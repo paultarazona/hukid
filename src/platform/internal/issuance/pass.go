@@ -242,6 +242,98 @@ type passClock func() time.Time
 
 func (c passClock) Now() time.Time { return c() }
 
+// passStatusResolver keeps pass verification self-contained: status-list URLs
+// embedded in a credential are resolved through the same issuance service and
+// tenant that produced the credential. No network request or untrusted host is
+// involved.
+type passStatusResolver struct {
+	service   *Service
+	issuerURI string
+	slug      string
+}
+
+func (r passStatusResolver) ResolveStatusList(credentialURL string) (string, error) {
+	rest, ok := strings.CutPrefix(credentialURL, strings.TrimRight(r.issuerURI, "/")+"/status/")
+	if !ok {
+		return "", verification.ErrStatusResolution
+	}
+	purpose, listID, ok := strings.Cut(rest, "/")
+	if !ok || purpose == "" || listID == "" || strings.Contains(listID, "/") {
+		return "", verification.ErrStatusResolution
+	}
+	jwt, err := r.service.resolveStatusListForPass(r.slug, purpose, listID)
+	if err != nil {
+		return "", verification.ErrStatusResolution
+	}
+	return jwt, nil
+}
+
+// resolveStatusListForPass signs a current view of the issuer-owned status
+// list. Public status artifacts have a bounded validity window and may be
+// waiting for their periodic publication job; a pass must not reject an active
+// credential merely because that cached artifact expired. The authoritative
+// bits are still read transactionally and signed with the active issuer key.
+func (s *Service) resolveStatusListForPass(slug, purpose, listID string) (string, error) {
+	if slug == "" || !isValidStatusPurpose(purpose) || strings.TrimSpace(listID) == "" {
+		return "", ErrResourceNotFound
+	}
+	tenantID, ok, err := s.backend.ResolveTenantBySlug(slug)
+	if err != nil || !ok {
+		return "", ErrResourceNotFound
+	}
+	var signed string
+	err = s.backend.WithTenantTx(tenantID, func(tx Tx) error {
+		issuerRec, found, err := tx.GetIssuerBySlug(slug)
+		if err != nil || !found || issuerRec.State != IssuerActive {
+			return ErrResourceNotFound
+		}
+		list, found, err := tx.GetPublishedStatusList(issuerRec.IssuerID, purpose, listID)
+		if err != nil || !found {
+			return ErrResourceNotFound
+		}
+		signer, err := s.resolveActiveSigner(tx, issuerRec)
+		if err != nil {
+			return err
+		}
+		now := s.now().UTC()
+		signed, err = IssueStatusListVC(signer, list.ListID, list.Purpose, list.RawBits, now, now.Add(s.cfg.StatusListTTL))
+		return err
+	})
+	if err != nil {
+		return "", ErrResourceNotFound
+	}
+	return signed, nil
+}
+
+// passSchemaResolver applies the published immutable schema that belongs to
+// the issuer. This makes a check-in pass obey the same schema validation as a
+// regular verification without depending on a public HTTP round trip.
+type passSchemaResolver struct {
+	service   *Service
+	issuerURI string
+	slug      string
+}
+
+func (r passSchemaResolver) ResolveSchema(schemaURL string) ([]byte, error) {
+	rest, ok := strings.CutPrefix(schemaURL, strings.TrimRight(r.issuerURI, "/")+"/schemas/")
+	if !ok {
+		return nil, verification.ErrSchemaResolution
+	}
+	id, versionFile, ok := strings.Cut(rest, "/")
+	if !ok || id == "" || strings.Contains(versionFile, "/") {
+		return nil, verification.ErrSchemaResolution
+	}
+	version, ok := strings.CutSuffix(versionFile, ".json")
+	if !ok || version == "" {
+		return nil, verification.ErrSchemaResolution
+	}
+	schema, err := r.service.ResolveCredentialSchema(r.slug, id, version)
+	if err != nil {
+		return nil, verification.ErrSchemaResolution
+	}
+	return schema, nil
+}
+
 func nested(claims map[string]any, object, field string) string {
 	inner, _ := claims[object].(map[string]any)
 	value, _ := inner[field].(string)
@@ -309,7 +401,10 @@ func (s *Service) CreatePass(presentation string) (Pass, error) {
 	if err != nil {
 		return Pass{}, ErrPassRejected
 	}
-	verifier = verifier.WithCredentialContexts(contexts[1:]...)
+	verifier = verifier.
+		WithCredentialContexts(contexts[1:]...).
+		WithStatusResolver(passStatusResolver{service: s, issuerURI: parsed.Issuer, slug: slug}, verification.DefaultStatusPolicy()).
+		WithSchemaResolver(passSchemaResolver{service: s, issuerURI: parsed.Issuer, slug: slug})
 	// The nonce doubles as state; consuming it makes the presentation single use.
 	report, err := verifier.WithReplayStore(passReplay{store: &s.passes, until: nonceExpiry}).VerifyPresentation(
 		verification.Response{VP: presentation, State: nonce},
@@ -346,6 +441,15 @@ func (s *Service) CreatePass(presentation string) (Pass, error) {
 	subject, _ := jwtPayload(credential)["credentialSubject"].(map[string]any)
 	record.registrationID = nested(subject, "recipient", "registrationId")
 	record.eventID = nested(subject, "event", "id")
+	// Compatibilidad con boletos emitidos por versiones anteriores de Nexo.
+	// Las nuevas emisiones usan recipient/event; las antiguas agrupaban estos
+	// identificadores bajo ticket y deben seguir pudiendo generar un pase.
+	if record.registrationID == "" {
+		record.registrationID = nested(subject, "ticket", "registrationId")
+	}
+	if record.eventID == "" {
+		record.eventID = nested(subject, "ticket", "eventId")
+	}
 	if record.registrationID == "" || record.eventID == "" {
 		return Pass{}, ErrPassUnsupported
 	}

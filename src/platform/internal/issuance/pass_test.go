@@ -161,6 +161,16 @@ func TestPassIsSingleUseAndBoundToTheEvent(t *testing.T) {
 	}
 }
 
+func TestPassUsesCurrentAuthoritativeStatusAfterPublishedListExpires(t *testing.T) {
+	f := newPassFixture(t)
+	f.h.clock.Advance(f.h.svc.cfg.StatusListTTL + time.Minute)
+
+	pass := f.pass(t)
+	if pass.Code == "" {
+		t.Fatal("expected an active credential to produce a pass after the cached status list expires")
+	}
+}
+
 func TestPassExpiresAndANewOneReplacesTheOld(t *testing.T) {
 	f := newPassFixture(t)
 	first := f.pass(t)

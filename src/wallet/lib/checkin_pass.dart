@@ -34,8 +34,22 @@ abstract interface class PassIssuer {
 /// Una credencial sirve para el ingreso si trae la inscripción y el evento.
 bool supportsCheckinPass(StoredCredential credential) {
   final fields = CredentialSummary.fromVcJwt(credential.vcJwt).fields;
-  return (fields['recipient.registrationId']?.isNotEmpty ?? false) &&
-      (fields['event.id']?.isNotEmpty ?? false);
+  final registrationId =
+      fields['recipient.registrationId'] ??
+      fields['recipient.registration_id'] ??
+      fields['registrationId'] ??
+      fields['ticket.registrationId'] ??
+      fields['ticket.registration_id'];
+  final eventId =
+      fields['event.id'] ??
+      fields['event.eventId'] ??
+      fields['eventId'] ??
+      fields['ticket.eventId'] ??
+      fields['ticket.event_id'];
+  return registrationId != null &&
+      registrationId.isNotEmpty &&
+      eventId != null &&
+      eventId.isNotEmpty;
 }
 
 class HukidPassClient implements PassIssuer {
@@ -57,13 +71,21 @@ class HukidPassClient implements PassIssuer {
   /// La dirección sale del emisor de la credencial guardada, nunca de un QR.
   Uri _endpoint(StoredCredential credential, String path) {
     final issuer = Uri.tryParse(credential.credentialIssuer);
-    final loopback = const {'127.0.0.1', 'localhost', '::1'}.contains(issuer?.host);
+    final loopback = const {
+      '127.0.0.1',
+      'localhost',
+      '::1',
+    }.contains(issuer?.host);
     if (issuer == null ||
         issuer.host.isEmpty ||
         issuer.userInfo.isNotEmpty ||
         !(issuer.scheme == 'https' ||
-            (issuer.scheme == 'http' && _config.allowInsecureLoopback && loopback))) {
-      throw const PassException('El emisor de esta credencial no tiene una dirección segura.');
+            (issuer.scheme == 'http' &&
+                _config.allowInsecureLoopback &&
+                loopback))) {
+      throw const PassException(
+        'El emisor de esta credencial no tiene una dirección segura.',
+      );
     }
     return Uri(
       scheme: issuer.scheme,
@@ -73,10 +95,16 @@ class HukidPassClient implements PassIssuer {
     );
   }
 
-  Future<Map<String, dynamic>> _post(Uri uri, Map<String, dynamic> body, int expected) async {
+  Future<Map<String, dynamic>> _post(
+    Uri uri,
+    Map<String, dynamic> body,
+    int expected,
+  ) async {
     final response = await _http.post(
       uri,
-      headers: const <String, String>{HttpHeaders.contentTypeHeader: 'application/json'},
+      headers: const <String, String>{
+        HttpHeaders.contentTypeHeader: 'application/json',
+      },
       body: jsonEncode(body),
     );
     if (response.statusCode != expected) {
@@ -94,10 +122,16 @@ class HukidPassClient implements PassIssuer {
   Future<CheckinPass> create(StoredCredential credential) async {
     try {
       final target = _endpoint(credential, '/v1/passes');
-      final challenge = await _post(_endpoint(credential, '/v1/passes/nonce'), const {}, 200);
+      final challenge = await _post(
+        _endpoint(credential, '/v1/passes/nonce'),
+        const {},
+        200,
+      );
       final key = await _keyStore.ensureKey(credential.keyAlias);
       if (key.thumbprint() != credential.holderJkt) {
-        throw const PassException('La clave de esta credencial ya no está en este teléfono.');
+        throw const PassException(
+          'La clave de esta credencial ya no está en este teléfono.',
+        );
       }
       final presentation = await buildVerifiablePresentationJwt(
         holderPublicJwk: key,
@@ -121,7 +155,12 @@ class HukidPassClient implements PassIssuer {
 }
 
 class PassPage extends StatefulWidget {
-  const PassPage({super.key, required this.issuer, required this.credential, this.now});
+  const PassPage({
+    super.key,
+    required this.issuer,
+    required this.credential,
+    this.now,
+  });
 
   final PassIssuer issuer;
   final StoredCredential credential;
@@ -177,7 +216,9 @@ class _PassPageState extends State<PassPage> {
   @override
   Widget build(BuildContext context) {
     final pass = _pass;
-    final seconds = pass == null ? 0 : pass.expiresAt.difference(_now()).inSeconds;
+    final seconds = pass == null
+        ? 0
+        : pass.expiresAt.difference(_now()).inSeconds;
     final live = pass != null && seconds > 0;
     return Scaffold(
       appBar: AppBar(title: const Text('Mostrar para ingresar')),
@@ -185,7 +226,10 @@ class _PassPageState extends State<PassPage> {
         child: ListView(
           padding: const EdgeInsets.all(24),
           children: [
-            Text(widget.credential.title, style: Theme.of(context).textTheme.titleLarge),
+            Text(
+              widget.credential.title,
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
             const SizedBox(height: 16),
             if (_busy) const Text('Creando tu pase…'),
             if (live) ...[
@@ -195,11 +239,18 @@ class _PassPageState extends State<PassPage> {
               Semantics(liveRegion: false, child: Text('Vence en $seconds s')),
             ],
             if (pass != null && !live) const Text('Este pase venció.'),
-            if (_error != null) Semantics(liveRegion: true, child: Text(_error!)),
+            if (_error != null)
+              Semantics(liveRegion: true, child: Text(_error!)),
             const SizedBox(height: 16),
             if (!_busy && !live)
-              FilledButton(onPressed: () => unawaited(_create()), child: const Text('Generar otro')),
-            TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cerrar')),
+              FilledButton(
+                onPressed: () => unawaited(_create()),
+                child: const Text('Generar otro'),
+              ),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cerrar'),
+            ),
           ],
         ),
       ),
@@ -222,7 +273,12 @@ class PassQr extends StatelessWidget {
         aspectRatio: 1,
         child: CustomPaint(
           painter: _QrPainter(
-            QrImage(QrCode.fromData(data: data, errorCorrectLevel: QrErrorCorrectLevel.M)),
+            QrImage(
+              QrCode.fromData(
+                data: data,
+                errorCorrectLevel: QrErrorCorrectLevel.M,
+              ),
+            ),
             data,
           ),
         ),
@@ -240,7 +296,10 @@ class _QrPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     // Siempre negro sobre blanco con zona de silencio de 4 módulos.
-    canvas.drawRect(Offset.zero & size, Paint()..color = const Color(0xffffffff));
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()..color = const Color(0xffffffff),
+    );
     final module = size.width / (image.moduleCount + 8);
     final dark = Paint()
       ..color = const Color(0xff000000)
@@ -249,7 +308,12 @@ class _QrPainter extends CustomPainter {
       for (var col = 0; col < image.moduleCount; col++) {
         if (image.isDark(row, col)) {
           canvas.drawRect(
-            Rect.fromLTWH((col + 4) * module, (row + 4) * module, module + 0.3, module + 0.3),
+            Rect.fromLTWH(
+              (col + 4) * module,
+              (row + 4) * module,
+              module + 0.3,
+              module + 0.3,
+            ),
             dark,
           );
         }

@@ -166,7 +166,12 @@ func configureOID4VCILab(ctx context.Context, address string, out io.Writer, now
 		return nil, nil, errVCILabConfig
 	}
 	if environment := os.Getenv("HUKID_ENV"); environment != "" && environment != enabled {
-		return nil, nil, errVCILabConfig
+		// The local OID4VCI laboratory may use the staging-shaped persistent
+		// schema only inside the explicitly marked development container. This
+		// exception is never available to a deployed staging/production process.
+		if !(os.Getenv("HUKID_CONTAINER_DEV") == "1" && environment == "staging" && enabled == "local") {
+			return nil, nil, errVCILabConfig
+		}
 	}
 	if now == nil {
 		now = time.Now
@@ -251,6 +256,28 @@ func configureOID4VCILab(ctx context.Context, address string, out io.Writer, now
 			cleanup()
 			return nil, nil, errVCILabConfig
 		}
+		// Seed the local integration issuer in PostgreSQL. These records are
+		// development fixtures and are recreated safely on every container start;
+		// issuance requests and credentials remain durable in the database.
+		seedTime := now().UTC()
+		issuerRec, seedErr := issuance.NewIssuerRecord(vciLabDefaultTenantID, vciLabDefaultIssuerID, slug, displayName, seedTime)
+		if seedErr != nil {
+			cleanup()
+			return nil, nil, errVCILabConfig
+		}
+		_, _ = backend.CreateIssuer(ctx, vciLabDefaultTenantID, vciLabDefaultIssuerID, slug, displayName, seedTime)
+		_ = backend.RegisterKey(ctx, vciLabDefaultTenantID, vciLabDefaultIssuerID, kid, "vci-lab-seed", pubJWK, "vci-lab-seed", "cor-seed-k1", seedTime)
+		certDef := issuance.CanonicalEventParticipationDefinition(vciLabDefaultTenantID, vciLabDefaultIssuerID, issuerURI)
+		certDef.Contexts = []string{issuance.CertificateContext}
+		_ = backend.CreateDraftDefinition(ctx, certDef, "vci-lab-seed", "cor-seed-d1", seedTime)
+		_, _ = backend.PublishDefinition(ctx, vciLabDefaultTenantID, vciLabDefaultIssuerID, certDef.ID, certDef.Version, "vci-lab-seed", "cor-seed-d2", seedTime)
+		clientID := defaultString(os.Getenv(vciLabClientID), vciLabDefaultClientID)
+		clientSecret := os.Getenv(vciLabClientSecret)
+		if clientSecret == "" {
+			return nil, nil, errVCILabConfig
+		}
+		_ = backend.RegisterClient(ctx, vciLabDefaultTenantID, clientID, "Lab Events Client", clientSecret, []string{vciLabDefaultIssuerID}, []string{issuance.ScopeIssuanceCreate, issuance.ScopeIssuanceRead, issuance.ScopeStatusWrite, issuance.ScopePassVerify}, nil, "vci-lab-seed", "cor-seed-c1", seedTime)
+		_ = issuerRec
 		signers := func(_, _, resolvedIssuerURI, resolvedKID, _ string, expectedPub *ecdsa.PublicKey) (issuance.Signer, error) {
 			if resolvedIssuerURI != issuerURI || resolvedKID != kid || expectedPub == nil || !expectedPub.Equal(&privKey.PublicKey) {
 				return nil, issuance.ErrNoActiveKey

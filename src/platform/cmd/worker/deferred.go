@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -142,7 +143,13 @@ func openIssuanceWorkerRuntime(ctx context.Context) (*pgxpool.Pool, *issuance.Se
 			return nil, nil, errDeferredWorkerConfig
 		}
 	} else if postgres.ValidateLoginDatabase(dsn) != nil {
-		return nil, nil, errDeferredWorkerConfig
+		// The local Docker profile uses the staging-shaped HukID schema on the
+		// isolated development network. Keep this exception explicit and limited
+		// to HUKID_CONTAINER_DEV; production still follows the strict rules above.
+		cfg, parseErr := pgxpool.ParseConfig(dsn)
+		if os.Getenv("HUKID_CONTAINER_DEV") != "1" || parseErr != nil || cfg.ConnConfig.Database != "hukid_staging" || cfg.ConnConfig.Host == "" {
+			return nil, nil, errDeferredWorkerConfig
+		}
 	}
 
 	authServer := strings.TrimRight(os.Getenv("HUKID_ISSUANCE_AUTH_SERVER"), "/")
@@ -181,9 +188,35 @@ func openIssuanceWorkerRuntime(ctx context.Context) (*pgxpool.Pool, *issuance.Se
 			return nil, nil, errDeferredWorkerConfig
 		}
 	}
-	vault, err := vaultkms.NewClient(vaultCfg)
-	if err != nil {
-		return nil, nil, errDeferredWorkerConfig
+	var signerResolver issuance.SignerResolver
+	var vaultClient *vaultkms.Client
+	if env == "local" && strings.TrimSpace(os.Getenv("HUKID_ISSUANCE_LAB_SIGNING_KEY")) != "" {
+		pemBytes, readErr := os.ReadFile(strings.TrimSpace(os.Getenv("HUKID_ISSUANCE_LAB_SIGNING_KEY")))
+		if readErr != nil {
+			return nil, nil, errDeferredWorkerConfig
+		}
+		signerResolver = func(_ string, _ string, issuerURI string, kid string, _ string, expectedPub *ecdsa.PublicKey) (issuance.Signer, error) {
+			issuerURL, parseErr := url.Parse(issuerURI)
+			if parseErr != nil || issuerURL.Host == "" {
+				return nil, errDeferredWorkerConfig
+			}
+			base := strings.TrimSuffix(issuerURI, issuerURL.Path[strings.LastIndex(issuerURL.Path, "/"):])
+			if err := issuance.SetIssuerPrefix(base); err != nil {
+				return nil, errDeferredWorkerConfig
+			}
+			signer, signerErr := issuance.NewMemorySignerFromPEM(issuerURI, kid, pemBytes, nil)
+			if signerErr != nil || expectedPub == nil || !signer.PublicKey().Equal(expectedPub) {
+				return nil, errDeferredWorkerConfig
+			}
+			return signer, nil
+		}
+	} else {
+		vault, vaultErr := vaultkms.NewClient(vaultCfg)
+		if vaultErr != nil {
+			return nil, nil, errDeferredWorkerConfig
+		}
+		vaultClient = vault
+		signerResolver = vault.Resolver()
 	}
 	if len(claimsKey) == 0 {
 		kek := strings.TrimSpace(os.Getenv("HUKID_VAULT_KEK_NAME"))
@@ -192,7 +225,10 @@ func openIssuanceWorkerRuntime(ctx context.Context) (*pgxpool.Pool, *issuance.Se
 			return nil, nil, errDeferredWorkerConfig
 		}
 		unwrapCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		claimsKey, err = vault.UnwrapDEK(unwrapCtx, kek, ciphertext, "hukid/claims-dek/v1|"+keyVersion)
+		if vaultClient == nil {
+			return nil, nil, errDeferredWorkerConfig
+		}
+		claimsKey, err = vaultClient.UnwrapDEK(unwrapCtx, kek, ciphertext, "hukid/claims-dek/v1|"+keyVersion)
 		cancel()
 		if err != nil || len(claimsKey) != 32 {
 			clear(claimsKey)
@@ -214,7 +250,7 @@ func openIssuanceWorkerRuntime(ctx context.Context) (*pgxpool.Pool, *issuance.Se
 	}
 	service, err := issuance.NewService(issuance.ServiceConfig{
 		ClaimsKey: claimsKey, ClaimsKeyVersion: keyVersion, Backend: backend,
-		Signers: vault.Resolver(), KeyProvisioner: vault.KeyProvisioner(),
+		Signers:             signerResolver,
 		AuthorizationServer: authServer,
 	})
 	if err != nil {
