@@ -1,0 +1,15 @@
+@layer legacy {
+/* Toolbar: the filter and the refresh action share one row on wide screens and wrap on narrow ones. */
+.verification-toolbar { display: flex; flex-flow: row wrap; align-items: end; justify-content: space-between; gap: var(--s4); margin-bottom: var(--s4); }
+.verification-toolbar label:where(:not([data-slot])) { display: grid; gap: var(--s2); min-width: 0; }
+.verification-toolbar select:where(:not([data-slot])) { width: 14rem; max-width: 100%; }
+.verification-toolbar button:where(:not([data-slot])) { flex: 0 0 auto; }
+/* The digest is shortened for scanning; the whole value stays one click from the clipboard. */
+.verification-new { margin-bottom: var(--s4); }
+.verification-qr { display: grid; justify-items: start; gap: var(--s2); }
+.verification-qr img { max-width: 100%; height: auto; background: #fff; }
+.verification-result { display: grid; gap: var(--s2); }
+.digest { display: flex; flex-flow: row nowrap; align-items: center; gap: var(--s2); white-space: nowrap; }
+.digest code { font-family: var(--font-code); white-space: nowrap; }
+.digest button:where(:not([data-slot])) { min-height: 0; padding: var(--s1) var(--s2); font-size: var(--text-sm); }
+}

@@ -7,13 +7,18 @@ const OIDC = 'o'.repeat(48);
 
 test('generates every API secret with the formats the API accepts', () => {
   const { values, created } = generate({}, OIDC);
-  for (const name of ['HUKID_AUTH_KEY', 'HUKID_INVITATION_KEY', 'HUKID_INVITATION_HMAC_KEY', 'HUKID_MEMBERS_CURSOR_KEY', 'HUKID_DASHBOARD_CURSOR_KEY']) {
+  for (const name of ['HUKID_AUTH_KEY', 'HUKID_INVITATION_KEY', 'HUKID_INVITATION_HMAC_KEY', 'HUKID_MEMBERS_CURSOR_KEY', 'HUKID_DASHBOARD_CURSOR_KEY', 'HUKID_VERIFICATION_KEY']) {
     assert.equal(Buffer.from(values[name], 'base64').length, 32, name);
     assert.equal(Buffer.from(values[name], 'base64').toString('base64'), values[name], `${name} is strict standard base64`);
   }
   for (const role of ROLES) assert.match(values[`HUKID_RUNTIME_PASSWORD_${role}`], /^[A-Za-z0-9_-]{32,128}$/);
   assert.equal(values.HUKID_OIDC_CLIENT_SECRET, OIDC);
   assert.equal(values.HUKID_AUTH_KEY_VERSION, 'staging-1');
+  assert.equal(values.HUKID_VERIFICATION_KEY_VERSION, 'staging-1');
+  assert.equal(values.HUKID_ISSUANCE_CLAIMS_KEY_VERSION, 'staging-1');
+  assert.equal(values.HUKID_VAULT_MOUNT, 'transit');
+  assert.equal(values.HUKID_VAULT_KEK_NAME, 'hukid-claims-dek');
+  assert.equal(values.HUKID_STAGING_DB_HOST, '');
   assert.ok(created.includes('HUKID_AUTH_KEY'));
 });
 

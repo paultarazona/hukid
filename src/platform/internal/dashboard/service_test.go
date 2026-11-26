@@ -96,6 +96,18 @@ func (r *testSnapshot) ActiveMembers(context.Context) (int64, time.Time, error) 
 	}
 	return 0, time.Now().UTC(), r.err
 }
+func (r *testSnapshot) CreatedRequests(context.Context, time.Time, time.Time) (int64, time.Time, error) {
+	if !r.observedAt.IsZero() {
+		return 0, r.observedAt, r.err
+	}
+	return 0, time.Now().UTC(), r.err
+}
+func (r *testSnapshot) IssuedCredentials(context.Context, time.Time, time.Time) (int64, time.Time, error) {
+	if !r.observedAt.IsZero() {
+		return 0, r.observedAt, r.err
+	}
+	return 0, time.Now().UTC(), r.err
+}
 func (r *testSnapshot) Activity(context.Context, Filter, Position, time.Time) ([]Event, error) {
 	panic("unauthorized source read")
 }

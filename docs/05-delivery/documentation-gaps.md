@@ -10,7 +10,7 @@ Las fases 1 y 2 incorporan únicamente infraestructura Tailwind v4/Base UI segú
 
 ## Decisiones abiertas del núcleo de credenciales — 2026-11-10
 
-Lo implementado hasta hoy es el panel administrativo (autenticación, miembros, dashboard). La emisión, el estado y la verificación de credenciales siguen pendientes ([hoja de ruta](hukid-roadmap.md), fases 0 y 2–6). La documentación deja abiertas las decisiones siguientes. Corresponden al owner; no se resuelven por inferencia ni por defecto de implementación.
+El repositorio contiene el núcleo de emisión/status y la consola tiene un primer incremento para administrar emisores, definiciones y clientes de integración ([acceso BFF y límites](../03-design/console-issuance-management.md)). Esto no completa el piloto: faltan listados administrativos de solicitudes/credenciales, autorización de status para operadores, definición de producto POS con payload aprobado y el recorrido de fuente/wallet. La verificación sigue su propio estado en [FEAT-004](../features/FEAT-004-credential-verification/spec.md). Las decisiones de producto que siguen abiertas corresponden al owner; no se resuelven por inferencia ni por defecto de implementación.
 
 | # | Decisión abierta | Qué dice la documentación | Fuente |
 | --- | --- | --- | --- |
@@ -22,6 +22,23 @@ Lo implementado hasta hoy es el panel administrativo (autenticación, miembros, 
 Hasta que se decidan, ningún ADR ni artefacto ejecutable debe presentar estos puntos como resueltos.
 
 La [propuesta FEAT-004](../features/FEAT-004-credential-verification/spec.md) y su [ADR-0030](../decisions/ADR-0030.md) cubren solo el núcleo de verificación de la fase 0, sin depender de #1–#4: las tareas que sí las necesitan (VER-T10 y VER-T11) quedan diferidas. El núcleo está implementado en laboratorio (VER-T01–T08, [gate V4](verification-gate.md)) por indicación del owner de iniciar la implementación; la aprobación formal de ambos documentos no está registrada. Siguen abiertos: status, resolución HTTPS del JWKS y schema (VER-T09, T12, T13), la interoperabilidad con un verifier externo, el conformance gate del perfil y los valores propuestos (límites de entrada, tolerancia de reloj, contextos permitidos).
+
+### Decisiones abiertas del owner — 2026-11-17
+
+Las decisiones #1–#4 de arriba quedaron cerradas por delegación y son revocables. Quedan abiertas, y no se resuelven por inferencia, las siguientes:
+
+| # | Decisión abierta | Estado |
+| --- | --- | --- |
+| 5 | Aprobar el texto del [ADR-0034](../decisions/ADR-0034.md) (custodia cifrada por tenant de la clave de firma del verifier). | **Resuelta: aprobado por el owner el 2026-11-17**, tal como está escrito. Revocable. |
+| 6 | Aprobación formal de FEAT-004, [ADR-0030](../decisions/ADR-0030.md) y [ADR-0031](../decisions/ADR-0031.md). | ADR-0033 está aprobado y no las cubre. |
+| 7 | Custodia de la clave privada de firma de cada emisor y puerto KMS (fases 0 y 1 del roadmap). | Distinta de la clave del verifier. Abierta. |
+| 8 | Credential definition de participación de Events: claims mínimos, mapping y evidencia. | Abierta. |
+| 9 | Canal de entrega de la oferta, app no instalada y autenticación del destinatario en credenciales nominativas. | Abierta. |
+| 10 | Si el ticket QR de Events sirve de entrada a una verificación. | No está documentado; sería una decisión nueva. |
+| 11 | Valores propuestos de FEAT-004: límites de entrada, tolerancia de reloj, contextos permitidos, TTL y límites del resolver JWKS. | Propuestos, sin aprobar. |
+| 12 | Qué hacer con el trabajo de juanrmos conservado en la etiqueta `backup-fake-2026-11-17`. | El owner indicó que se verá más adelante. |
+
+Pendientes de implementación que no son decisiones: programar la purga de retención (la retención de 30 días ya está aprobada con ADR-0033). El login de mantenimiento existe en el código (migración `0015` y login opcional de `stagingdb runtime-logins`, solo puede ejecutar `purge_sessions` y `purge_retired_keys`) y está aplicado en staging desde el 2026-11-19, pero **no hay un planificador**. El alta de la clave y de `verifier_configs` del tenant se hace con `verifierctl` (sin API).
 
 ## Correcciones de auditoría frontend — 2026-11-08
 
@@ -94,6 +111,10 @@ Los paquetes [FEAT-001/002/003](../features/README.md) añaden especificación, 
 Para empezar AUTH-T01 no es necesario recuperar los ejemplos de emisión ni configurar KMS issuer. Para completar login integrado sí hacen falta IdP test compatible, políticas de sesión/MFA, contrato de operador y migraciones mínimas; miembros necesita policy de invitación/notificación. No marcar esos artefactos como disponibles por existir el plan.
 
 Pendientes actuales del panel: D3/DASH-T05 y los bloqueos productivos de los gates [AUTH](authentication-gate.md), [USR](members-gate.md) y [DASH](dashboard-gate.md). Hay un harness E2E descartable y pantallas conectadas. El owner confirmó ingreso en un laboratorio manual temporal preparado fuera del código versionado; no es un entorno demo persistente reproducible desde checkout ni un despliegue productivo. No acredita emisión/verificación documental. Las secciones de incremento que siguen conservan el estado histórico de su fecha.
+
+### FEAT-005 — incremento técnico de administración issuer
+
+[FEAT-005](../features/FEAT-005-issuer-operations/spec.md) conecta emisores/keys, definitions, clientes y listados metadata-only de solicitudes/credenciales a través del BFF y Management API; el estado vigente por tarea está en [tasks.md](../features/FEAT-005-issuer-operations/tasks.md). Para staging ya existe configuración de Caddy, login PostgreSQL `issuance`, helper de secretos y overlay de runtime/workers. **El overlay no se ha aplicado ni probado contra Dokploy**: endpoint/policy/token de Vault, tenant piloto, confianza TLS de PostgreSQL y smoke HTTPS siguen pendientes de operación y evidencia. Los cambios del repo no equivalen a deploy productivo ni conformance; se mantienen las dependencias externas de Team 4/Wallet y el perfil draft.
 
 ### Incremento USR-T02
 
@@ -234,3 +255,19 @@ Arranque/parada, persistencia y bootstrap repetido se comprobaron; bootstrap fal
 ### Corrección posterior del perfil local
 
 El [perfil Keycloak implementado](../03-design/console-local-keycloak.md) y [ADR-0026](../decisions/ADR-0026.md) corrigen provisioning, autenticación administrativa y configuración de los módulos locales. El estado de validación final se mantiene en [tareas AUTH/LOC](../features/FEAT-001-authentication/tasks.md); el párrafo y el informe anteriores describen el diagnóstico previo, no sustituyen esa evidencia posterior. Enrolamiento TOTP sin ejecución OTP sigue denegado por diseño y requiere completar un login posterior. Correo real, matriz completa de caídas, rotación/restore, CI remoto y producción siguen fuera de la evidencia local.
+
+## Integración local con el sistema de eventos y pase de ingreso — 2026-11-26
+
+Incremento de laboratorio: perfil local en Linux con Docker, [inicio de verificación desde la consola](../decisions/ADR-0037.md) y [pase de ingreso](../decisions/ADR-0038.md) ([contrato](../03-design/checkin-pass.md)). Ambas decisiones siguen **propuestas**.
+
+Comprobado: recepción de una credencial en un teléfono Android conectado por USB y canje de un pase leído de su pantalla, con un cliente de prueba en el papel de la puerta (otro evento rechazado, aceptado una vez, reutilización rechazada).
+
+Pendiente o sin acreditar:
+
+- Presentación OpenID4VP de extremo a extremo con el verificador local y la pantalla «Nueva verificación»: sin probar en teléfono ni navegador.
+- Lectura del pase con la cámara del sistema de puerta y registro de la entrada en él; ese código vive en su propio repositorio.
+- La credencial de ingreso debe emitirse antes del evento; las pruebas usaron una de asistencia como excepción de desarrollo.
+- La confianza de la wallet en el verificador sólo existe para laboratorio (clave y CA fijadas al compilar): una wallet distribuida rechaza toda solicitud OpenID4VP.
+- Los pases viven en memoria (una sola réplica) y los endpoints públicos del pase no tienen limitación de frecuencia.
+- La consulta PostgreSQL por huella del JWT no tiene prueba de integración propia; sólo se ejercitó en la prueba manual con teléfono.
+- Las pruebas de navegador y los gates AUTH/USR/DASH no se ejecutaron. Los cambios de `local-env.mjs` y `local-vault.mjs` no se probaron en Windows, y no se repitió un ciclo detener/arrancar tras corregir el cierre del proxy HTTPS.

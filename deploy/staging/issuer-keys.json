@@ -1,0 +1,12 @@
+[
+  {
+    "issuer": "https://issuer.staging.invalid",
+    "kid": "staging-placeholder-1",
+    "jwk": {
+      "kty": "EC",
+      "crv": "P-256",
+      "x": "7qa8KKGpLWEkMCxhpDFDK9RakLABuL7Bo36SSpAOfM8",
+      "y": "8gR1WcxYQtbPpyckHyYtQIz-wThJhawsEr3QVgrUHLE"
+    }
+  }
+]

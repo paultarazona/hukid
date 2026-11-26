@@ -38,6 +38,8 @@ type Event struct {
 type Snapshot interface {
 	Access() Access
 	ActiveMembers(context.Context) (int64, time.Time, error)
+	CreatedRequests(context.Context, time.Time, time.Time) (int64, time.Time, error)
+	IssuedCredentials(context.Context, time.Time, time.Time) (int64, time.Time, error)
 	// GeneratedAt uses the source clock so freshness never compares two hosts'
 	// wall clocks. Called after reading sources, inside the authorized snapshot.
 	GeneratedAt(context.Context) (time.Time, error)
@@ -154,16 +156,27 @@ func (s *Service) Overview(ctx context.Context, actor, tenant, raw string) (Over
 		if allowed {
 			count, asOf, sourceErr = reader.ActiveMembers(ctx)
 		}
+		canIssuance := tenancy.MemberCapabilityAllowed(a.Roles, "issuance:read")
+		var reqCount, credCount int64
+		var reqAsOf, credAsOf time.Time
+		var reqErr, credErr error
+		if canIssuance {
+			reqCount, reqAsOf, reqErr = reader.CreatedRequests(ctx, f.From, f.To)
+			credCount, credAsOf, credErr = reader.IssuedCredentials(ctx, f.From, f.To)
+		}
 		generatedAt, err := reader.GeneratedAt(ctx)
 		if err != nil || generatedAt.IsZero() {
 			return authentication.ErrDependency
 		}
 		result.GeneratedAt = generatedAt.UTC()
-		result.Sections["activeMembers"] = SourceSection(allowed, true, count, asOf, result.GeneratedAt, sourceErr, time.Duration(s.policy.StaleAfterSeconds)*time.Second)
+		staleAfter := time.Duration(s.policy.StaleAfterSeconds) * time.Second
+		result.Sections["activeMembers"] = SourceSection(allowed, true, count, asOf, result.GeneratedAt, sourceErr, staleAfter)
 		if result.Sections["activeMembers"].State == "error" {
 			return authentication.ErrDependency
 		}
-		for name, capability := range map[string]string{"activeIssuers": "issuer:read", "publishedDefinitionVersions": "definition:read", "createdRequests": "issuance:read", "issuedCredentials": "issuance:read", "pendingStatusChanges": "status:read"} {
+		result.Sections["createdRequests"] = SourceSection(canIssuance, true, reqCount, reqAsOf, result.GeneratedAt, reqErr, staleAfter)
+		result.Sections["issuedCredentials"] = SourceSection(canIssuance, true, credCount, credAsOf, result.GeneratedAt, credErr, staleAfter)
+		for name, capability := range map[string]string{"activeIssuers": "issuer:read", "publishedDefinitionVersions": "definition:read", "pendingStatusChanges": "status:read"} {
 			result.Sections[name] = SourceSection(tenancy.MemberCapabilityAllowed(a.Roles, capability), false, 0, time.Time{}, result.GeneratedAt, nil, 0)
 		}
 		return nil

@@ -8,6 +8,7 @@
 
 # Local generated artifacts
 .cache/
+.local/
 # Reproducible local audit screenshots; reports and source stay versioned.
 docs/frontend/audits/**/screens/
 

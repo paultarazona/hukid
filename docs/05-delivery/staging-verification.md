@@ -4,6 +4,21 @@ Checklist ejecutable contra `https://hukid.zentrycore.com`. Separa lo que ya pru
 
 **Estado:** esta lista no se ha ejecutado contra staging. Lo marcado "CI" es lo que existe y pasa en el gate; lo marcado "Manual" es un procedimiento propuesto y no probado.
 
+## Issuer OID4VCI (overlay preparado, despliegue pendiente)
+
+El repo contiene [`compose.issuer.yaml`](../../deploy/staging/compose.issuer.yaml), que agrega el runtime aislado del issuer y los workers optativos, y [`Caddyfile`](../../deploy/staging/Caddyfile), que enruta sus rutas al API. Estos cambios no han sido aplicados al Dokploy ni probados contra el host.
+
+| Verificación | Criterio | Evidencia requerida en staging |
+| --- | --- | --- |
+| API + overlay | `api` queda healthy con `HUKID_ENV=staging`, HTTPS en auth/public URL, login `issuance` y `HUKID_ISSUANCE_CLAIMS_KEY_CIPHERTEXT` válido. | `docker compose -f compose.yaml -f compose.issuer.yaml ps`; logs sin credenciales; endpoint `/healthz` responde 204. |
+| Rutas y descubrimiento | Caddy reenvía authorization-server metadata, metadata/JWKS issuer, OAuth token, endpoints de oferta/nonce/credential/deferred, status/schema/context y `/v1/*` sin devolver el SPA. | `curl -i https://hukid.zentrycore.com/.well-known/oauth-authorization-server`; tras provisionar un issuer, consultar `/{slug}/.well-known/openid-credential-issuer` y `/{slug}/.well-known/jwks.json`; una ruta desconocida bajo `/v1/` no debe ser `index.html`. |
+| Vault Transit | El API envuelve/usa claves transit con token de alcance mínimo; la DEK envuelta está asociada a `HUKID_ISSUANCE_CLAIMS_KEY_VERSION`. | Revisión de Vault audit + recorrido sintético de definición/llave; nunca copiar el token o DEK en logs. |
+| Worker diferido | Worker inicia solo con tenant piloto válido y completa una emisión diferida, tomando lock tenant-scoped. | Activar perfil `issuer-workers`; crear solicitud diferida de prueba, observar `fulfilled=1` y polling de credencial lista. |
+| Worker retención | TTL de 168h ratificado por owner, tenant-scoped y sin afectar material no vencido. | Revisar métricas/logs redacted y auditar `issuance.retention_purged`; prueba de staging con material de prueba vencido. |
+| TLS PostgreSQL | API y workers usan `sslmode=verify-full` y CA montada desde archivo host mediante Compose secret. | Confirmar con el proveedor la CA y un hostname resoluble con SAN coincidente; configurar `HUKID_POSTGRES_CA_FILE` (ruta absoluta) y `HUKID_STAGING_DB_HOST`. |
+
+No se considera deploy cerrado hasta aportar evidencia fechada de estas comprobaciones y confirmar que Dokploy está usando ambos compose files.
+
 ## Cómo leer la columna "Automatizado"
 
 - **CI (Go):** test de integración en `src/platform/internal/adapters/postgres/`, que el gate `auth-lab` ejecuta con PostgreSQL y OIDC desechables (`npm run test:postgres`). Prueban el código, **no** la configuración de staging.

@@ -1,6 +1,11 @@
 {
   "version": "0.1.0-draft",
   "scope": "tenant-local",
+  "reserved": [
+    "issuer:read",
+    "definition:read",
+    "status:read"
+  ],
   "roles": {
     "tenant_admin": [
       "dashboard:read",
@@ -11,6 +16,10 @@
       "invitations:read",
       "invitations:revoke",
       "audit:read",
+      "issuers:manage",
+      "definitions:manage",
+      "clients:manage",
+      "issuance:read",
       "verification:start",
       "verification:read"
     ],
@@ -22,7 +31,8 @@
       "verification:read"
     ],
     "issuer_operator": [
-      "dashboard:read"
+      "dashboard:read",
+      "issuance:read"
     ],
     "support_readonly": [
       "dashboard:read"
@@ -33,6 +43,9 @@
     "members:update",
     "members:revoke",
     "invitations:revoke",
+    "issuers:manage",
+    "definitions:manage",
+    "clients:manage",
     "verification:start"
   ],
   "restrictions": {

@@ -1,9 +1,9 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "HukID verification sessions — VER-T11-a contract baseline",
+    "title": "HukID verification sessions — VER-T11 contract (draft, list added for VER-T11-e)",
     "version": "0.1.0-draft",
-    "description": "Own contract for the per-tenant Verifier-as-a-Service (ADR-0033). Draft: only the start operation has a handler (VER-T11-c2), and it is not mounted in cmd/api yet; the read operation is not implemented. verification:start and verification:read are declared in capabilities.json (VER-T11-c1) for tenant_admin and security_admin; only the start handler consumes verification:start. Responses never carry the JWS, claims, vp_token, nonce or state (VER-FR08)."
+    "description": "Own contract for the per-tenant Verifier-as-a-Service (ADR-0033). Draft: the start operation (VER-T11-c2) and the reads (VER-T11-e) have handlers, mounted in cmd/api only when the verification configuration is set. verification:start and verification:read are declared in capabilities.json (VER-T11-c1) for tenant_admin and security_admin; only the start handler consumes verification:start. Responses never carry the JWS, claims, vp_token, nonce or state (VER-FR08). VER-T11-e adds the read-only list used by the console (ADR-0033 amendment 2026-11-18): newest first, keyset-paginated per tenant, same fields as the single read, no JWS, claims, nonce or state. Implemented (VER-T11-e1, e2) for the Bearer API and for the console cookie mount; the console reads only, starting a session stays a Bearer operation with fresh MFA."
   },
   "servers": [
     {
@@ -73,6 +73,81 @@
             "$ref": "#/components/responses/Error"
           }
         }
+      },
+      "get": {
+        "operationId": "operatorListVerificationSessions",
+        "summary": "List the tenant's verification sessions, newest first (capability verification:read, no step-up)",
+        "security": [
+          {
+            "operatorBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TenantId"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "pending",
+                "completed",
+                "expired"
+              ]
+            },
+            "description": "Filter. expired is derived from expires_at at read time, as in the single read."
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 32,
+              "maxLength": 2048,
+              "pattern": "^[A-Za-z0-9_-]+$"
+            },
+            "description": "Opaque authenticated cursor over (created_at, session_id) descending, bound to tenant, actor and filter. Invalid, expired or foreign cursors return 422."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 25
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Page of sessions for the authorized tenant only (RLS and membership). Cache-Control: no-store.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerificationSessionPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
       }
     },
     "/v1/operator/tenants/{tenantId}/verification-sessions/{sessionId}": {
@@ -121,6 +196,210 @@
           }
         }
       }
+    },
+    "/console/api/tenants/{tenantId}/verification-sessions": {
+      "post": {
+        "operationId": "consoleStartVerificationSession",
+        "summary": "Start a verification session from the console (ADR-0037, proposed): active tenant, exact console Origin, CSRF proof, verification:start and fresh MFA",
+        "security": [
+          {
+            "consoleSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TenantId"
+          },
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 2048
+            },
+            "description": "Must equal the configured console origin."
+          },
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "ttlSeconds": {
+                    "type": "integer",
+                    "minimum": 60,
+                    "maximum": 900,
+                    "description": "Proposed default 300; the module cap is 15 minutes."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Session created. The launch URI is the only handle; nonce, state and keys are never returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerificationSessionCreated"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "get": {
+        "operationId": "consoleListVerificationSessions",
+        "summary": "List the tenant's verification sessions, newest first (capability verification:read, no step-up) — browser mount: requires the explicitly selected active tenant, otherwise 404",
+        "security": [
+          {
+            "consoleSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TenantId"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "pending",
+                "completed",
+                "expired"
+              ]
+            },
+            "description": "Filter. expired is derived from expires_at at read time, as in the single read."
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 32,
+              "maxLength": 2048,
+              "pattern": "^[A-Za-z0-9_-]+$"
+            },
+            "description": "Opaque authenticated cursor over (created_at, session_id) descending, bound to tenant, actor and filter. Invalid, expired or foreign cursors return 422."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 25
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Page of sessions for the authorized tenant only (RLS and membership). Cache-Control: no-store.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerificationSessionPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/console/api/tenants/{tenantId}/verification-sessions/{sessionId}": {
+      "get": {
+        "operationId": "consoleGetVerificationSession",
+        "summary": "Read the state and result of a session (proposed capability verification:read) — browser mount: requires the explicitly selected active tenant, otherwise 404",
+        "security": [
+          {
+            "consoleSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TenantId"
+          },
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Public session identifier, unrelated to the OpenID4VP state."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Session state; result fields are present only once the session is completed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerificationSession"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -129,6 +408,12 @@
         "type": "http",
         "scheme": "bearer",
         "description": "Operator token. Capabilities come from the local membership, never from token roles."
+      },
+      "consoleSession": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "hukid_test_session",
+        "description": "Console session cookie (AUTH test profile). Browser reads only; no bearer tokens in the browser."
       }
     },
     "parameters": {
@@ -218,7 +503,8 @@
           },
           "reportDigest": {
             "type": "string",
-            "description": "Digest of the report; never the JWS or claims. Only when status is completed."
+            "description": "Digest of the report; never the JWS or claims. Only when status is completed.",
+            "pattern": "^sha256:[0-9a-f]{64}$"
           },
           "createdAt": {
             "type": "string",
@@ -243,6 +529,30 @@
         "properties": {
           "code": {
             "type": "string"
+          }
+        }
+      },
+      "VerificationSessionPage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "$ref": "#/components/schemas/VerificationSession"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Null on the last page."
           }
         }
       }

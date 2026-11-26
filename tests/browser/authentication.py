@@ -15,6 +15,7 @@ from playwright.sync_api import sync_playwright, expect
 from shell_ui import USER_BUTTON, in_tenant, menu_action, switch_tenant
 from members import run_members
 from dashboard import run_dashboard
+from verifications import run_verifications
 from frontend_audit import capture, run_frontend_audit
 
 config = json.loads(sys.stdin.readline())
@@ -266,6 +267,9 @@ with sync_playwright() as playwright:
 
         # Settle dashboard/context reads before expiring the session out of band;
         # otherwise an earlier 401 can remove the user menu before the click.
+        expect(page.locator('[aria-busy="true"]')).to_have_count(0)
+        expect(page.get_by_role('region', name='Resumen operativo')).to_contain_text('Generado:')
+        expect(page.get_by_role('region', name='Actividad reciente')).to_contain_text('Datos al')
         page.wait_for_load_state('networkidle')
         database('expire')
         expired = session_cookie(context)
@@ -358,6 +362,7 @@ with sync_playwright() as playwright:
         expect(page.get_by_label('Organización', exact=True)).to_have_value('only-tenant')
         page.unroute('**/console/api/me', one_tenant)
         run_dashboard(page, context, config, database, heading, login, artifacts)
+        run_verifications(page, context, config, database, heading, login, artifacts)
         run_members(page, context, browser, config, authorize, database, heading, login, artifacts)
         run_frontend_audit(browser, origin, artifacts)
         context.close()

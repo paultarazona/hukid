@@ -17,6 +17,9 @@ COPY --from=build /out/ /app/
 # Policies carry no secrets. The members policy only supports the synthetic profile today
 # (membership_rules.go requires environment "test"), so staging reuses the same files as local.
 COPY src/platform/config/auth.staging.json src/platform/config/user-management.test.json src/platform/config/dashboard.test.json /app/config/
+# Public placeholder key only (the private half was discarded): the verification mount needs at
+# least one issuer key, but no real issuer is trusted until the JWKS resolver (VER-T12).
+COPY deploy/staging/issuer-keys.json /app/config/
 # The API must listen on loopback only (bootstrap.ListenAddress); the web sidecar shares its
 # network namespace and is the only listener Traefik reaches.
 ENV HUKID_ENV=staging HUKID_LISTEN_ADDR=127.0.0.1:8080

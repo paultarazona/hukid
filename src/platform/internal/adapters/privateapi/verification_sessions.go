@@ -15,6 +15,7 @@ import (
 	"hukid.local/platform/internal/adapters/oid4vphttp"
 	a "hukid.local/platform/internal/authentication"
 	"hukid.local/platform/internal/oid4vp"
+	"hukid.local/platform/internal/verificationview"
 )
 
 // VerificationCapabilityStart is granted by the local membership (ADR-0033 #5).
@@ -24,6 +25,9 @@ const (
 	defaultVerificationTTL = 5 * time.Minute
 	minVerificationTTL     = time.Minute
 	maxVerificationBody    = 1 << 10
+	// verificationExpiryMargin is how much earlier the in-memory session
+	// expires than the persisted row.
+	verificationExpiryMargin = 2 * time.Second
 )
 
 // VerificationStarter persists a pending session for the authorized tenant and
@@ -45,10 +49,22 @@ type VerificationHandler struct {
 	Starter  VerificationStarter
 	Sessions *oid4vp.SessionStore
 	Now      func() time.Time
+	// Reader and CursorKey serve the read-only list and lookup (VER-T11-e). The
+	// key (at least 32 bytes) authenticates list cursors; without both, the read
+	// routes fail closed with 503.
+	Reader    VerificationReader
+	CursorKey []byte
 }
 
 func (h *VerificationHandler) Register(mux *http.ServeMux) {
-	mux.HandleFunc("/v1/operator/tenants/{tenantId}/verification-sessions", h.start)
+	mux.HandleFunc("/v1/operator/tenants/{tenantId}/verification-sessions", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			h.list(w, r)
+			return
+		}
+		h.start(w, r)
+	})
+	mux.HandleFunc("/v1/operator/tenants/{tenantId}/verification-sessions/{sessionId}", h.get)
 }
 
 func (h *VerificationHandler) now() time.Time {
@@ -95,6 +111,11 @@ func readTTL(r *http.Request) (time.Duration, error) {
 	}
 	return ttl, nil
 }
+
+// ServeStart is the start operation for the console mount, which has already
+// checked the browser session, Origin and CSRF. It applies the same bearer,
+// fresh-MFA, membership and capability checks as the operator API.
+func (h *VerificationHandler) ServeStart(w http.ResponseWriter, r *http.Request) { h.start(w, r) }
 
 func (h *VerificationHandler) start(w http.ResponseWriter, r *http.Request) {
 	if !PrepareMethod(w, r, http.MethodPost) {
@@ -146,7 +167,11 @@ func (h *VerificationHandler) start(w http.ResponseWriter, r *http.Request) {
 		VerificationProblem(w, err)
 		return
 	}
-	session, err := oid4vp.NewSession(oid4vp.Config{ClientID: clientID, ResponseURI: responseURI, TTL: ttl}, h.now(), nil)
+	// The in-memory session must expire before the row does: complete_session
+	// refuses an expired row after the anti-replay already consumed the request,
+	// so a response accepted in the gap would be lost. The margin also absorbs
+	// clock skew between this process and the database.
+	session, err := oid4vp.NewSession(oid4vp.Config{ClientID: clientID, ResponseURI: responseURI, TTL: ttl, SessionID: sessionID, TenantID: tenant, NotAfter: expiresAt.Add(-verificationExpiryMargin)}, h.now(), nil)
 	if err != nil {
 		VerificationProblem(w, err)
 		return
@@ -175,10 +200,16 @@ var errVerificationForbidden = errors.New("verification capability required")
 
 // VerificationProblem maps errors to generic responses: nothing about the
 // verifier configuration, the store or the cause reaches the caller.
-func VerificationProblem(w http.ResponseWriter, err error) {
+func VerificationProblem(w http.ResponseWriter, err error) { VerificationProblemFor(w, err, true) }
+
+// VerificationProblemFor is VerificationProblem for either authentication
+// scheme: bearer adds the WWW-Authenticate challenge, the cookie mount does not.
+func VerificationProblemFor(w http.ResponseWriter, err error, bearer bool) {
 	switch {
 	case errors.Is(err, errVerificationForbidden):
 		writeProblem(w, 403, "forbidden", "Acceso no permitido")
+	case errors.Is(err, verificationview.ErrNotFound):
+		writeProblem(w, 404, "resource_not_found", "Recurso no encontrado")
 	case errors.Is(err, oid4vp.ErrStoreFull):
 		w.Header().Set("Retry-After", "5")
 		writeProblem(w, 429, "too_many_sessions", "Demasiadas sesiones abiertas")
@@ -186,6 +217,6 @@ func VerificationProblem(w http.ResponseWriter, err error) {
 		w.Header().Set("Retry-After", "1")
 		writeProblem(w, 503, "dependency_unavailable", "Servicio no disponible")
 	default:
-		InvitationProblem(w, err, true)
+		InvitationProblem(w, err, bearer)
 	}
 }
